@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+build
+.env
+.env.local
+.env.production
+*.log
+.git
+.github
+.vscode
+.idea

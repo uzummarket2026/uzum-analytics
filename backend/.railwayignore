@@ -1,0 +1,15 @@
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+env/
+*.log
+scratch/
+test_*.py
+railway_*.txt
+railway_config.txt

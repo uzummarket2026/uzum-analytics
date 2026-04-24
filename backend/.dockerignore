@@ -1,0 +1,15 @@
+venv
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+uzum.db
+image_debug.txt
+scripts/logs/
+*.log
+.git
+.github
+.vscode
+.idea

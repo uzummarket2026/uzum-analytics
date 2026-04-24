@@ -1,0 +1,51 @@
+# ---------- Umumiy ----------
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+scratch/
+docs/
+# Env fayllar (.env.example qoldiring)
+.env
+.env.local
+.env.*.local
+.env.production
+!.env.example
+
+# ---------- Python / Backend ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+venv/
+env/
+.venv/
+ENV/
+
+# DB
+*.db
+*.sqlite
+*.sqlite3
+
+# Alembic versions saqlanadi (migratsiyalar), lekin mahalliy db emas
+backend/uzum.db
+backend/scripts/logs/
+
+# ---------- Node / Frontend ----------
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---------- Railway / Deploy ----------
+backend/scripts/railway_*.txt
+backend/scripts/*_token*.txt
