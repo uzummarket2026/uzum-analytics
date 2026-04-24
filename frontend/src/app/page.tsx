@@ -32,7 +32,8 @@ export default function Dashboard() {
     totalProfit: 0,
     totalCommission: 0,
     totalLogistic: 0,
-    activeShops: 0
+    activeShops: 0,
+    fboInventoryValue: 0,
   });
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,6 +52,10 @@ export default function Dashboard() {
       const prodRes = await fetch(apiUrl(`/api/products/?${productsParams.toString()}`));
       const products = await prodRes.json();
 
+      // Yangi summary API'dan foydalanamiz
+      const summaryRes = await fetch(apiUrl(`/api/products/summary?${productsParams.toString()}`));
+      const summary = await summaryRes.json();
+
       const orderRes = await fetch(apiUrl(`/api/orders/?${ordersParams.toString()}`));
       const orders = await orderRes.json();
 
@@ -60,13 +65,14 @@ export default function Dashboard() {
       const logistic = Array.isArray(orders) ? orders.reduce((acc: number, o: any) => acc + (o.logistic_fee || 0), 0) : 0;
 
       setStats({
-        totalProducts: Array.isArray(products) ? products.length : 0,
+        totalProducts: summary.total_products || 0,
         totalOrders: Array.isArray(orders) ? orders.length : 0,
         totalRevenue: revenue,
         totalProfit: profit,
         totalCommission: commission,
         totalLogistic: logistic,
-        activeShops: shops.length
+        activeShops: shops.length,
+        fboInventoryValue: summary.total_fbo_value || 0,
       });
       setRecentOrders(Array.isArray(orders) ? orders.slice(0, 5) : []);
     } catch (error) {
@@ -119,14 +125,14 @@ export default function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Jami Mahsulotlar" value={stats.totalProducts} icon={Package} color="#7c3aed" />
-        <StatCard title="Jami Buyurtmalar" value={stats.totalOrders} icon={Users} color="#3b82f6" />
+        <StatCard title="FBO Ombor Qiymati" value={`${stats.fboInventoryValue.toLocaleString()} so'm`} icon={Package} color="#a855f7" />
         <StatCard title="Umumiy Tushum" value={`${stats.totalRevenue.toLocaleString()} so'm`} icon={DollarSign} color="#10b981" />
         <StatCard title="Sof Foyda" value={`${stats.totalProfit.toLocaleString()} so'm`} icon={TrendingUp} color={stats.totalProfit >= 0 ? "#10b981" : "#ef4444"} />
+        <StatCard title="Buyurtmalar" value={stats.totalOrders} icon={Users} color="#3b82f6" />
       </div>
 
       {/* Qo'shimcha moliyaviy kartalar */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#f59e0b] transition-all">
           <p className="text-sm text-[#94a3b8] mb-1">Komissiya (Uzum)</p>
           <p className="text-xl font-bold text-[#f59e0b]">{stats.totalCommission.toLocaleString()} so'm</p>
@@ -138,6 +144,10 @@ export default function Dashboard() {
         <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#3b82f6] transition-all">
           <p className="text-sm text-[#94a3b8] mb-1">Faol do'konlar</p>
           <p className="text-xl font-bold text-[#3b82f6]">{stats.activeShops} ta</p>
+        </div>
+        <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#7c3aed] transition-all">
+          <p className="text-sm text-[#94a3b8] mb-1">Jami mahsulotlar</p>
+          <p className="text-xl font-bold text-[#7c3aed]">{stats.totalProducts} ta</p>
         </div>
       </div>
 

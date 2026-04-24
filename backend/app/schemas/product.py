@@ -26,3 +26,8 @@ class ProductResponse(ProductBase):
 
     class Config:
         from_attributes = True
+
+class ProductSummary(BaseModel):
+    total_fbo_value: float
+    total_fbo_stock: int
+    total_products: int

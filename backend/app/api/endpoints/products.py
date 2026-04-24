@@ -2,12 +2,41 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, BackgroundTasks, Response, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.api import deps
 from app.db.models import Product
-from app.schemas.product import ProductResponse
+from app.schemas.product import ProductResponse, ProductSummary
 import httpx
 
 router = APIRouter()
+
+@router.get("/summary", response_model=ProductSummary)
+def get_product_summary(
+    shop_id: Optional[int] = Query(None),
+    db: Session = Depends(deps.get_db)
+):
+    """FBO omboridagi mahsulotlar tannarxi va soni haqida ma'lumot."""
+    query = db.query(Product)
+    if shop_id is not None:
+        query = query.filter(Product.shop_id == shop_id)
+    
+    # Umumiy qiymatni hisoblash: sum(fbo_stock * purchase_price)
+    # Eslatma: purchase_price NULL bo'lishi mumkin, shuning uchun func.coalesce ishlatamiz
+    total_value = db.query(
+        func.sum(Product.fbo_stock * func.coalesce(Product.purchase_price, 0))
+    ).filter(Product.id.in_(query.with_entities(Product.id))).scalar() or 0
+    
+    total_fbo_stock = db.query(
+        func.sum(Product.fbo_stock)
+    ).filter(Product.id.in_(query.with_entities(Product.id))).scalar() or 0
+    
+    total_products = query.count()
+    
+    return {
+        "total_fbo_value": total_value,
+        "total_fbo_stock": total_fbo_stock,
+        "total_products": total_products
+    }
 
 @router.get("/", response_model=List[ProductResponse])
 def read_products(

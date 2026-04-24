@@ -74,7 +74,9 @@
       "Bash(curl -sv https://backend-production-1af8.up.railway.app/)",
       "Bash(curl -s \"https://backend-production-1af8.up.railway.app/api/products/?limit=1\")",
       "Bash(curl -sf -X POST https://backend-production-1af8.up.railway.app/admin/migrate-columns)",
-      "Bash(railway connect *)"
+      "Bash(railway connect *)",
+      "Bash(curl -s \"https://backend-production-1af8.up.railway.app/api/products/?limit=2\")",
+      "Bash(curl -s \"https://backend-production-1af8.up.railway.app/api/shops/\")"
     ]
   }
 }
