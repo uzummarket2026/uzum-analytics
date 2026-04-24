@@ -16,21 +16,19 @@ def get_product_summary(
     db: Session = Depends(deps.get_db)
 ):
     """FBO omboridagi mahsulotlar tannarxi va soni haqida ma'lumot."""
-    query = db.query(Product)
-    if shop_id is not None:
-        query = query.filter(Product.shop_id == shop_id)
-    
     # Umumiy qiymatni hisoblash: sum(fbo_stock * purchase_price)
-    # Eslatma: purchase_price NULL bo'lishi mumkin, shuning uchun func.coalesce ishlatamiz
-    total_value = db.query(
-        func.sum(Product.fbo_stock * func.coalesce(Product.purchase_price, 0))
-    ).filter(Product.id.in_(query.with_entities(Product.id))).scalar() or 0
+    value_query = db.query(func.sum(Product.fbo_stock * func.coalesce(Product.purchase_price, 0)))
+    stock_query = db.query(func.sum(Product.fbo_stock))
+    count_query = db.query(func.count(Product.id))
     
-    total_fbo_stock = db.query(
-        func.sum(Product.fbo_stock)
-    ).filter(Product.id.in_(query.with_entities(Product.id))).scalar() or 0
+    if shop_id is not None:
+        value_query = value_query.filter(Product.shop_id == shop_id)
+        stock_query = stock_query.filter(Product.shop_id == shop_id)
+        count_query = count_query.filter(Product.shop_id == shop_id)
     
-    total_products = query.count()
+    total_value = value_query.scalar() or 0
+    total_fbo_stock = stock_query.scalar() or 0
+    total_products = count_query.scalar() or 0
     
     return {
         "total_fbo_value": total_value,
