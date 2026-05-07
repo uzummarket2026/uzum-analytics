@@ -119,6 +119,35 @@ def migrate_db():
                 except Exception as e:
                     print(f"Error adding user_id to {table}: {e}")
 
+    # 4. Eski unique constraint'larni olib tashlash (multi-user uchun bir xil
+    # qiymatlar bir necha userda bo'lishi mumkin: api_token, uzum_order_id, ...)
+    legacy_unique_constraints = [
+        ("system_settings", "system_settings_key_key"),
+        ("shops", "shops_uzum_shop_id_key"),
+        ("products", "products_sku_id_key"),
+        ("orders", "orders_uzum_order_id_key"),
+    ]
+    legacy_unique_indexes = [
+        "ix_system_settings_key",
+        "ix_shops_uzum_shop_id",
+        "ix_products_sku_id",
+        "ix_orders_uzum_order_id",
+    ]
+    with engine.connect() as conn:
+        for table, cons in legacy_unique_constraints:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {cons}"))
+                conn.commit()
+            except Exception as e:
+                print(f"Drop constraint {cons}: {e}")
+        # Postgres'da unique=True alohida unique index yaratadi — uni ham qayta yaratamiz (unique'siz)
+        for idx in legacy_unique_indexes:
+            try:
+                conn.execute(text(f"DROP INDEX IF EXISTS {idx}"))
+                conn.commit()
+            except Exception as e:
+                print(f"Drop index {idx}: {e}")
+
     print("Database initialization complete.")
 
 
