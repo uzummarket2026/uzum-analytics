@@ -22,7 +22,7 @@ import {
   BarChart,
   Bar
 } from 'recharts';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, authFetch } from '@/lib/api';
 
 export default function FinancePage() {
   const [stats, setStats] = useState({
@@ -38,11 +38,11 @@ export default function FinancePage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const statsRes = await fetch(apiUrl('/api/finance/stats'));
+      const statsRes = await authFetch(apiUrl('/api/finance/stats'));
       const statsData = await statsRes.json();
       setStats(statsData);
 
-      const expRes = await fetch(apiUrl('/api/finance/expenses'));
+      const expRes = await authFetch(apiUrl('/api/finance/expenses'));
       const expData = await expRes.json();
       setExpenses(expData);
     } catch (error) {
@@ -59,7 +59,7 @@ export default function FinancePage() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      await fetch(apiUrl('/api/finance/expenses/sync'), { method: 'POST' });
+      await authFetch(apiUrl('/api/finance/expenses/sync'), { method: 'POST' });
       setTimeout(fetchData, 3000);
     } catch (error) {
       console.error('Sync error:', error);

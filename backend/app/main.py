@@ -1,12 +1,19 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from apscheduler.schedulers.background import BackgroundScheduler
 from app.api.api import api_router
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url="/api/openapi.json"
 )
+
+# Avtomatik sinxronlash uchun scheduler (har soatda buyurtmalar)
+scheduler = BackgroundScheduler(timezone="Asia/Tashkent")
 
 origins = [o.strip() for o in settings.BACKEND_CORS_ORIGINS.split(",") if o.strip()]
 
@@ -96,7 +103,98 @@ def migrate_db():
                     except Exception as e:
                         print(f"Error adding {col}: {e}")
         
+    # 3. user_id ustunini barcha tegishli jadvallarga qo'shish (multi-user uchun)
+    user_id_tables = ["shops", "products", "orders", "expenses",
+                      "invoices", "fbs_orders", "returns", "system_settings"]
+    with engine.connect() as conn:
+        for table in user_id_tables:
+            if table not in tables:
+                continue
+            cols = [c['name'] for c in inspector.get_columns(table)]
+            if "user_id" not in cols:
+                print(f"Adding column {table}.user_id...")
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER"))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Error adding user_id to {table}: {e}")
+
     print("Database initialization complete.")
+
+
+@app.on_event("startup")
+def seed_users_and_assign_data():
+    """Birinchi ishga tushirishda 3 ta foydalanuvchi yaratiladi
+    va eski ma'lumotlar (agar bo'lsa) birinchi foydalanuvchiga biriktiriladi.
+    """
+    from app.db.session import SessionLocal
+    from app.db.models import User, Shop, Product, Order, Expense, Invoice, FbsOrder, Return, SystemSetting
+    from app.core import security
+    from sqlalchemy import update
+
+    db = SessionLocal()
+    try:
+        # 3 ta default foydalanuvchi (birinchi ishga tushirishda yaratiladi)
+        DEFAULT_USERS = [
+            ("user1@local", "user1pass"),
+            ("user2@local", "user2pass"),
+            ("user3@local", "user3pass"),
+        ]
+        first_user_id = None
+        for email, password in DEFAULT_USERS:
+            existing = db.query(User).filter(User.email == email).first()
+            if not existing:
+                u = User(
+                    email=email,
+                    hashed_password=security.get_password_hash(password),
+                    is_active=True,
+                )
+                db.add(u)
+                db.commit()
+                db.refresh(u)
+                print(f"[seed] Yaratildi: {email} / {password}")
+                if first_user_id is None:
+                    first_user_id = u.id
+            else:
+                if first_user_id is None:
+                    first_user_id = existing.id
+
+        # Eski ma'lumotlar (user_id=NULL) birinchi foydalanuvchiga biriktiriladi
+        if first_user_id is not None:
+            for Model in [Shop, Product, Order, Expense, Invoice, FbsOrder, Return, SystemSetting]:
+                stmt = update(Model).where(Model.user_id.is_(None)).values(user_id=first_user_id)
+                result = db.execute(stmt)
+                if result.rowcount:
+                    print(f"[seed] {Model.__tablename__}: {result.rowcount} ta yozuv user_id={first_user_id} ga biriktirildi")
+            db.commit()
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+def start_scheduler():
+    """Har soatda buyurtmalarni avtomatik sinxronlash (barcha userlar uchun)."""
+    from app.api.endpoints.sync import auto_sync_all_users
+    if not scheduler.running:
+        scheduler.add_job(
+            auto_sync_all_users,
+            "cron",
+            minute=5,
+            id="auto_sync_orders",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+        scheduler.start()
+        logger.info("Scheduler ishga tushdi: barcha userlar uchun auto-sync har soatning 5-daqiqasida")
+        print("[scheduler] Auto-sync (multi-user) har soatda 05-daqiqada — yoqilgan")
+
+
+@app.on_event("shutdown")
+def stop_scheduler():
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+        print("[scheduler] To'xtatildi")
+
 
 app.include_router(api_router, prefix="/api")
 
@@ -110,7 +208,7 @@ def force_migrate_columns():
     from sqlalchemy import text, inspect
 
     inspector = inspect(engine)
-    results = {}
+    results = {"products": {}, "orders": {}}
 
     product_cols = {
         "image_url": "VARCHAR",
@@ -121,13 +219,21 @@ def force_migrate_columns():
         "fbs_stock": "INTEGER DEFAULT 0",
         "commission_percent": "FLOAT DEFAULT 0",
     }
-    existing = [c['name'] for c in inspector.get_columns('products')]
+    order_cols = {
+        "sku_code": "VARCHAR",
+        "sku_title": "VARCHAR",
+        "sku_char_title": "VARCHAR",
+        "sku_char_value": "VARCHAR",
+    }
+
     with engine.connect() as conn:
-        for col, col_type in product_cols.items():
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE products ADD COLUMN {col} {col_type}"))
-                conn.commit()
-                results[col] = "added"
-            else:
-                results[col] = "exists"
+        for table, cols in [("products", product_cols), ("orders", order_cols)]:
+            existing = [c['name'] for c in inspector.get_columns(table)]
+            for col, col_type in cols.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+                    conn.commit()
+                    results[table][col] = "added"
+                else:
+                    results[table][col] = "exists"
     return results

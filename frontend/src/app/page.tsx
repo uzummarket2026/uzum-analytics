@@ -1,37 +1,61 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { 
-  TrendingUp, 
-  Users, 
-  Package, 
-  DollarSign, 
-  ArrowUpRight, 
-  ArrowDownRight,
+import {
+  TrendingUp,
+  Users,
+  Package,
+  DollarSign,
   RefreshCcw,
   Loader2,
-  Store
+  Store,
+  Calendar,
 } from 'lucide-react';
-import { 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  AreaChart,
-  Area
-} from 'recharts';
 import { useShop } from '@/context/ShopContext';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, authFetch } from '@/lib/api';
+
+type Preset = 'today' | 'current_month' | 'last_month' | 'current_year' | 'all' | 'custom';
+
+function isoDate(d: Date) {
+  // YYYY-MM-DD lokal sana
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function rangeFromPreset(preset: Preset): { from: string; to: string } | null {
+  const now = new Date();
+  if (preset === 'today') {
+    return { from: isoDate(now), to: isoDate(now) };
+  }
+  if (preset === 'current_month') {
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0); // joriy oy oxirgi kuni
+    return { from: isoDate(from), to: isoDate(to) };
+  }
+  if (preset === 'last_month') {
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const to = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: isoDate(from), to: isoDate(to) };
+  }
+  if (preset === 'current_year') {
+    const from = new Date(now.getFullYear(), 0, 1);
+    return { from: isoDate(from), to: isoDate(now) };
+  }
+  return null; // all yoki custom
+}
 
 export default function Dashboard() {
-  const { selectedShopId, selectedShop, shops } = useShop();
+  const { selectedShopIds, selectedShop, shops } = useShop();
   const [stats, setStats] = useState({
     totalProducts: 0,
     totalOrders: 0,
     totalRevenue: 0,
     totalProfit: 0,
+    totalToWithdraw: 0,
     totalCommission: 0,
     totalLogistic: 0,
+    totalCost: 0,
     activeShops: 0,
     fboInventoryValue: 0,
   });
@@ -39,42 +63,64 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
+  // Sana filtri
+  const [preset, setPreset] = useState<Preset>('current_month');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+
+  const getRange = (): { from?: string; to?: string } => {
+    if (preset === 'custom') {
+      return { from: customFrom || undefined, to: customTo || undefined };
+    }
+    const r = rangeFromPreset(preset);
+    return r ? { from: r.from, to: r.to } : {};
+  };
+
   const fetchData = async () => {
     setLoading(true);
     try {
+      const range = getRange();
       const productsParams = new URLSearchParams();
-      const ordersParams = new URLSearchParams({ limit: '500' });
-      if (selectedShopId) {
-        productsParams.set('shop_id', String(selectedShopId));
-        ordersParams.set('shop_id', String(selectedShopId));
+      const summaryParams = new URLSearchParams();
+      const recentParams = new URLSearchParams({ limit: '5' });
+
+      selectedShopIds.forEach(id => {
+        const s = String(id);
+        productsParams.append('shop_ids', s);
+        summaryParams.append('shop_ids', s);
+        recentParams.append('shop_ids', s);
+      });
+      if (range.from) {
+        summaryParams.set('date_from', range.from);
+        recentParams.set('date_from', range.from);
+      }
+      if (range.to) {
+        summaryParams.set('date_to', range.to);
+        recentParams.set('date_to', range.to);
       }
 
-      const prodRes = await fetch(apiUrl(`/api/products/?${productsParams.toString()}`));
-      const products = await prodRes.json();
-
-      // Yangi summary API'dan foydalanamiz
-      const summaryRes = await fetch(apiUrl(`/api/products/summary?${productsParams.toString()}`));
-      const summary = await summaryRes.json();
-
-      const orderRes = await fetch(apiUrl(`/api/orders/?${ordersParams.toString()}`));
-      const orders = await orderRes.json();
-
-      const revenue = Array.isArray(orders) ? orders.reduce((acc: number, o: any) => acc + (o.total_price || 0), 0) : 0;
-      const profit = Array.isArray(orders) ? orders.reduce((acc: number, o: any) => acc + (o.seller_profit || 0), 0) : 0;
-      const commission = Array.isArray(orders) ? orders.reduce((acc: number, o: any) => acc + (o.commission_amount || 0), 0) : 0;
-      const logistic = Array.isArray(orders) ? orders.reduce((acc: number, o: any) => acc + (o.logistic_fee || 0), 0) : 0;
+      const [prodSummaryRes, ordersSummaryRes, recentRes] = await Promise.all([
+        authFetch(apiUrl(`/api/products/summary?${productsParams.toString()}`)),
+        authFetch(apiUrl(`/api/orders/summary?${summaryParams.toString()}`)),
+        authFetch(apiUrl(`/api/orders/?${recentParams.toString()}`)),
+      ]);
+      const prodSummary = await prodSummaryRes.json();
+      const ordersSummary = await ordersSummaryRes.json();
+      const recent = await recentRes.json();
 
       setStats({
-        totalProducts: summary.total_products || 0,
-        totalOrders: Array.isArray(orders) ? orders.length : 0,
-        totalRevenue: revenue,
-        totalProfit: profit,
-        totalCommission: commission,
-        totalLogistic: logistic,
+        totalProducts: prodSummary.total_products || 0,
+        totalOrders: ordersSummary.count || 0,
+        totalRevenue: ordersSummary.revenue || 0,
+        totalProfit: ordersSummary.profit || 0,
+        totalToWithdraw: ordersSummary.to_withdraw || 0,
+        totalCommission: ordersSummary.commission || 0,
+        totalLogistic: ordersSummary.logistic || 0,
+        totalCost: ordersSummary.purchase_total || 0,
         activeShops: shops.length,
-        fboInventoryValue: summary.total_fbo_value || 0,
+        fboInventoryValue: prodSummary.total_fbo_value || 0,
       });
-      setRecentOrders(Array.isArray(orders) ? orders.slice(0, 5) : []);
+      setRecentOrders(Array.isArray(recent) ? recent : []);
     } catch (error) {
       console.error('Xatolik:', error);
     } finally {
@@ -84,37 +130,52 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
-  }, [selectedShopId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedShopIds, preset, customFrom, customTo]);
 
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const res = await fetch(apiUrl('/api/sync/all'), { method: 'POST' });
+      const res = await authFetch(apiUrl('/api/sync/all'), { method: 'POST' });
       if (res.ok) {
-        alert("Sinxronizatsiya boshlandi! Ma'lumotlar bir necha soniyadan so'ng yangilanadi.");
         setTimeout(fetchData, 5000);
       }
-    } catch (error) {
-      alert('Sinxronizatsiyada xatolik yuz berdi');
+    } catch {
+      alert('Sinxronizatsiyada xatolik');
     } finally {
       setSyncing(false);
     }
   };
 
-  const shopLabel = selectedShop ? selectedShop.name : "Barcha do'konlar";
+  const shopLabel = selectedShopIds.length === 0
+    ? "Barcha do'konlar"
+    : selectedShopIds.length === 1
+      ? (selectedShop?.name ?? `Do'kon #${selectedShopIds[0]}`)
+      : `${selectedShopIds.length} ta do'kon`;
+  const range = getRange();
+  const periodLabel = (() => {
+    if (preset === 'today') return 'Bugun';
+    if (preset === 'current_month') return 'Joriy oy';
+    if (preset === 'last_month') return "O'tgan oy";
+    if (preset === 'current_year') return 'Joriy yil';
+    if (preset === 'all') return 'Hammasi';
+    return `${range.from || '—'} … ${range.to || '—'}`;
+  })();
 
   return (
     <div className="flex flex-col gap-8">
-      <header className="flex justify-between items-center">
+      <header className="flex justify-between items-center flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-bold text-white">Dashboard</h1>
-          <p className="text-[#94a3b8] mt-1 flex items-center gap-2">
+          <p className="text-[#94a3b8] mt-1 flex items-center gap-2 flex-wrap">
             <Store size={14} className="text-[#7c3aed]" />
             {shopLabel}
-            {selectedShop && <span className="text-xs bg-[#7c3aed]/10 text-[#7c3aed] px-2 py-0.5 rounded-full">ID: {selectedShop.uzum_shop_id}</span>}
+            <span className="mx-1 text-[#475569]">·</span>
+            <Calendar size={14} className="text-[#a78bfa]" />
+            <span className="text-[#a78bfa]">{periodLabel}</span>
           </p>
         </div>
-        <button 
+        <button
           onClick={handleSync}
           disabled={syncing}
           className="flex items-center gap-2 bg-[#7c3aed] hover:bg-[#6d28d9] disabled:bg-[#4c1d95] text-white px-6 py-3 rounded-xl font-semibold transition-all hover:scale-105 active:scale-95 shadow-lg shadow-[#7c3aed]/20"
@@ -124,41 +185,86 @@ export default function Dashboard() {
         </button>
       </header>
 
+      {/* Sana filtri */}
+      <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-4 flex flex-wrap items-center gap-3">
+        <span className="text-sm text-[#94a3b8] mr-2">Davr:</span>
+        {([
+          ['today', 'Bugun'],
+          ['current_month', 'Joriy oy'],
+          ['last_month', "O'tgan oy"],
+          ['current_year', 'Joriy yil'],
+          ['all', 'Hammasi'],
+          ['custom', "Boshqa"],
+        ] as [Preset, string][]).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setPreset(key)}
+            className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
+              preset === key
+                ? 'bg-[#7c3aed] text-white'
+                : 'bg-[#0f1115] text-[#94a3b8] border border-[#2a2e37] hover:border-[#7c3aed]'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        {preset === 'custom' && (
+          <div className="flex items-center gap-2 ml-2">
+            <input
+              type="date"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="bg-[#0f1115] border border-[#2a2e37] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-[#7c3aed]"
+            />
+            <span className="text-[#94a3b8]">—</span>
+            <input
+              type="date"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="bg-[#0f1115] border border-[#2a2e37] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-[#7c3aed]"
+            />
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard title="FBO Ombor Qiymati" value={`${stats.fboInventoryValue.toLocaleString()} so'm`} icon={Package} color="#a855f7" />
         <StatCard title="Umumiy Tushum" value={`${stats.totalRevenue.toLocaleString()} so'm`} icon={DollarSign} color="#10b981" />
-        <StatCard title="Sof Foyda" value={`${stats.totalProfit.toLocaleString()} so'm`} icon={TrendingUp} color={stats.totalProfit >= 0 ? "#10b981" : "#ef4444"} />
-        <StatCard title="Buyurtmalar" value={stats.totalOrders} icon={Users} color="#3b82f6" />
+        <StatCard title="Sof Foyda" value={`${stats.totalProfit.toLocaleString()} so'm`} icon={TrendingUp} color={stats.totalProfit >= 0 ? '#10b981' : '#ef4444'} />
+        <StatCard title="Buyurtmalar" value={stats.totalOrders.toLocaleString()} icon={Users} color="#3b82f6" />
       </div>
 
-      {/* Qo'shimcha moliyaviy kartalar */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#10b981] transition-all">
+          <p className="text-sm text-[#94a3b8] mb-1">Chiqarishga</p>
+          <p className="text-xl font-bold text-[#10b981]">{stats.totalToWithdraw.toLocaleString()} so'm</p>
+        </div>
         <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#f59e0b] transition-all">
-          <p className="text-sm text-[#94a3b8] mb-1">Komissiya (Uzum)</p>
+          <p className="text-sm text-[#94a3b8] mb-1">Komissiya</p>
           <p className="text-xl font-bold text-[#f59e0b]">{stats.totalCommission.toLocaleString()} so'm</p>
         </div>
         <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#ef4444] transition-all">
-          <p className="text-sm text-[#94a3b8] mb-1">Logistika xarajati</p>
+          <p className="text-sm text-[#94a3b8] mb-1">Logistika</p>
           <p className="text-xl font-bold text-[#ef4444]">{stats.totalLogistic.toLocaleString()} so'm</p>
         </div>
-        <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#3b82f6] transition-all">
-          <p className="text-sm text-[#94a3b8] mb-1">Faol do'konlar</p>
-          <p className="text-xl font-bold text-[#3b82f6]">{stats.activeShops} ta</p>
-        </div>
-        <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#7c3aed] transition-all">
-          <p className="text-sm text-[#94a3b8] mb-1">Jami mahsulotlar</p>
-          <p className="text-xl font-bold text-[#7c3aed]">{stats.totalProducts} ta</p>
+        <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-5 hover:border-[#94a3b8] transition-all">
+          <p className="text-sm text-[#94a3b8] mb-1">Tannarx (jami)</p>
+          <p className="text-xl font-bold text-[#94a3b8]">{stats.totalCost.toLocaleString()} so'm</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Orders */}
-        <div className="lg:col-span-2 bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-6 hover:border-[#7c3aed] transition-all">
+        <div className="lg:col-span-2 bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-6">
           <h3 className="text-lg font-semibold text-white mb-6">Oxirgi buyurtmalar</h3>
           <div className="flex flex-col gap-4">
-            {recentOrders.length > 0 ? recentOrders.map((order: any, i: number) => (
+            {loading ? (
+              <div className="text-center py-10 text-[#94a3b8]">
+                <Loader2 className="animate-spin mx-auto mb-2" size={20} />
+                Yuklanmoqda...
+              </div>
+            ) : recentOrders.length > 0 ? recentOrders.map((order: any, i: number) => (
               <div key={i} className="flex items-center gap-4 group p-2 rounded-lg hover:bg-[#242830]/50 transition-all">
-                <div className="w-10 h-10 bg-[#242830] rounded-xl flex items-center justify-center text-[#7c3aed] group-hover:bg-[#7c3aed] group-hover:text-white transition-all">
+                <div className="w-10 h-10 bg-[#242830] rounded-xl flex items-center justify-center text-[#7c3aed]">
                   <Package size={20} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -187,8 +293,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Do'konlar ro'yxati */}
-        <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-6 hover:border-[#7c3aed] transition-all">
+        <div className="bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-6">
           <h3 className="text-lg font-semibold text-white mb-6">Do'konlar</h3>
           <div className="flex flex-col gap-3">
             {shops.length > 0 ? shops.map((shop) => (

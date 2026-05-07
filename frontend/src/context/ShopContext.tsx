@@ -1,6 +1,6 @@
 'use client';
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, authFetch } from '@/lib/api';
 
 export interface Shop {
   id: number;
@@ -13,27 +13,47 @@ export interface Shop {
 
 interface ShopContextType {
   shops: Shop[];
-  selectedShopId: number | null; // null = Barcha do'konlar
-  setSelectedShopId: (id: number | null) => void;
+  /** Tanlangan do'konlar IDlari. Bo'sh array = barcha do'konlar. */
+  selectedShopIds: number[];
+  setSelectedShopIds: (ids: number[]) => void;
+  toggleShop: (id: number) => void;
+  selectAll: () => void;
+  /** Backward-compat: aniq 1 ta do'kon tanlangan bo'lsa shu, aks holda null */
+  selectedShopId: number | null;
   selectedShop: Shop | null;
   loading: boolean;
 }
 
 const ShopContext = createContext<ShopContextType>({
   shops: [],
+  selectedShopIds: [],
+  setSelectedShopIds: () => {},
+  toggleShop: () => {},
+  selectAll: () => {},
   selectedShopId: null,
-  setSelectedShopId: () => {},
   selectedShop: null,
   loading: true,
 });
 
+const STORAGE_KEY = 'selectedShopIds';
+
 export function ShopProvider({ children }: { children: ReactNode }) {
   const [shops, setShops] = useState<Shop[]>([]);
-  const [selectedShopId, setSelectedShopId] = useState<number | null>(null);
+  const [selectedShopIds, setSelectedShopIdsState] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(apiUrl('/api/shops/'))
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr) && arr.every(x => typeof x === 'number')) {
+          setSelectedShopIdsState(arr);
+        }
+      }
+    } catch {}
+
+    authFetch(apiUrl('/api/shops/'))
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -44,10 +64,37 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const selectedShop = shops.find(s => s.id === selectedShopId) ?? null;
+  const setSelectedShopIds = (ids: number[]) => {
+    setSelectedShopIdsState(ids);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch {}
+  };
+
+  const toggleShop = (id: number) => {
+    setSelectedShopIds(
+      selectedShopIds.includes(id)
+        ? selectedShopIds.filter(x => x !== id)
+        : [...selectedShopIds, id]
+    );
+  };
+
+  const selectAll = () => setSelectedShopIds([]);
+
+  const selectedShopId = selectedShopIds.length === 1 ? selectedShopIds[0] : null;
+  const selectedShop = selectedShopId !== null
+    ? shops.find(s => s.id === selectedShopId) ?? null
+    : null;
 
   return (
-    <ShopContext.Provider value={{ shops, selectedShopId, setSelectedShopId, selectedShop, loading }}>
+    <ShopContext.Provider value={{
+      shops,
+      selectedShopIds,
+      setSelectedShopIds,
+      toggleShop,
+      selectAll,
+      selectedShopId,
+      selectedShop,
+      loading,
+    }}>
       {children}
     </ShopContext.Provider>
   );

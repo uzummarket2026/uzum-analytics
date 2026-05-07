@@ -4,7 +4,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.api import deps
-from app.db.models import Product
+from app.db.models import Product, User
 from app.schemas.product import ProductResponse, ProductSummary
 import httpx
 
@@ -13,15 +13,20 @@ router = APIRouter()
 @router.get("/summary", response_model=ProductSummary)
 def get_product_summary(
     shop_id: Optional[int] = Query(None),
-    db: Session = Depends(deps.get_db)
+    shop_ids: Optional[List[int]] = Query(None),
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
 ):
     """FBO omboridagi mahsulotlar tannarxi va soni haqida ma'lumot."""
-    # Umumiy qiymatni hisoblash: sum(fbo_stock * purchase_price)
-    value_query = db.query(func.sum(Product.fbo_stock * func.coalesce(Product.purchase_price, 0)))
-    stock_query = db.query(func.sum(Product.fbo_stock))
-    count_query = db.query(func.count(Product.id))
-    
-    if shop_id is not None:
+    value_query = db.query(func.sum(Product.fbo_stock * func.coalesce(Product.purchase_price, 0))).filter(Product.user_id == current_user.id)
+    stock_query = db.query(func.sum(Product.fbo_stock)).filter(Product.user_id == current_user.id)
+    count_query = db.query(func.count(Product.id)).filter(Product.user_id == current_user.id)
+
+    if shop_ids:
+        value_query = value_query.filter(Product.shop_id.in_(shop_ids))
+        stock_query = stock_query.filter(Product.shop_id.in_(shop_ids))
+        count_query = count_query.filter(Product.shop_id.in_(shop_ids))
+    elif shop_id is not None:
         value_query = value_query.filter(Product.shop_id == shop_id)
         stock_query = stock_query.filter(Product.shop_id == shop_id)
         count_query = count_query.filter(Product.shop_id == shop_id)
@@ -39,12 +44,16 @@ def get_product_summary(
 @router.get("/", response_model=List[ProductResponse])
 def read_products(
     skip: int = 0,
-    shop_id: Optional[int] = Query(None, description="Do'kon ID bo'yicha filtrlash"),
-    db: Session = Depends(deps.get_db)
+    shop_id: Optional[int] = Query(None, description="Bitta do'kon"),
+    shop_ids: Optional[List[int]] = Query(None, description="Bir nechta do'kon"),
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
 ):
-    """Mahsulotlar ro'yxati. shop_id bo'yicha filtrlash mumkin."""
-    query = db.query(Product)
-    if shop_id is not None:
+    """Mahsulotlar ro'yxati. shop_id yoki shop_ids bo'yicha filtrlash."""
+    query = db.query(Product).filter(Product.user_id == current_user.id)
+    if shop_ids:
+        query = query.filter(Product.shop_id.in_(shop_ids))
+    elif shop_id is not None:
         query = query.filter(Product.shop_id == shop_id)
     products = query.offset(skip).all()
     return products
@@ -98,6 +107,13 @@ def backfill_purchase_price(background_tasks: BackgroundTasks):
     from app.worker.tasks import backfill_product_purchase_prices
     background_tasks.add_task(backfill_product_purchase_prices)
     return {"message": "Tannarx sinxronlash fonda boshlandi. Yakunlangach sahifani yangilang."}
+
+@router.post("/backfill-from-orders")
+def backfill_from_orders(db: Session = Depends(deps.get_db)):
+    """Orders jadvalidan (OrderItemDto.purchasePrice) tannarxlarni mahsulotlarga yozish. Darhol."""
+    from app.worker.tasks import backfill_purchase_prices_from_orders
+    result = backfill_purchase_prices_from_orders(db)
+    return {"message": result}
 
 from app.services.uzum_client import UzumClient
 from app.core.config import settings

@@ -12,3 +12,10 @@ class UserResponse(UserBase):
 
     class Config:
         from_attributes = True
+
+
+class UserUpdate(BaseModel):
+    """Foydalanuvchini tahrirlash — har bir maydon ixtiyoriy."""
+    email: EmailStr | None = None
+    password: str | None = None
+    is_active: bool | None = None

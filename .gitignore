@@ -49,3 +49,5 @@ next-env.d.ts
 # ---------- Railway / Deploy ----------
 backend/scripts/railway_*.txt
 backend/scripts/*_token*.txt
+.claude/
+uzum-analytics.zip

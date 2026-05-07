@@ -1,60 +1,100 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { apiUrl, setToken, getToken } from '@/lib/api'
+import { Loader2, LogIn } from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+
+  useEffect(() => {
+    if (getToken()) router.replace('/')
+  }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Simulated API call
-    console.log('Logging in', email)
-    router.push('/')
+    setLoading(true)
+    setError(null)
+    try {
+      const body = new URLSearchParams()
+      body.set('username', email)
+      body.set('password', password)
+      const res = await fetch(apiUrl('/api/auth/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.detail || `Login xato (${res.status})`)
+      }
+      const data = await res.json()
+      if (!data.access_token) throw new Error('Token kelmadi')
+      setToken(data.access_token)
+      router.replace('/')
+    } catch (err: any) {
+      setError(err?.message || 'Xato')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Sign in to your account
-          </h2>
+    <div className="min-h-screen flex items-center justify-center bg-[#0f1115] py-12 px-4">
+      <div className="max-w-md w-full bg-[#1a1d23] border border-[#2a2e37] rounded-2xl p-8">
+        <div className="text-center mb-6">
+          <div className="w-12 h-12 bg-[#7c3aed] rounded-xl flex items-center justify-center font-extrabold text-white text-xl mx-auto mb-3">
+            U
+          </div>
+          <h2 className="text-2xl font-bold text-white">Uzum Analytics</h2>
+          <p className="text-sm text-[#94a3b8] mt-1">Hisobingizga kiring</p>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <input
-                type="email"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Email address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
+
+        <form className="space-y-4" onSubmit={handleLogin}>
+          <input
+            type="email"
+            required
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full bg-[#0f1115] border border-[#2a2e37] rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-[#7c3aed]"
+          />
+          <input
+            type="password"
+            required
+            placeholder="Parol"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full bg-[#0f1115] border border-[#2a2e37] rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-[#7c3aed]"
+          />
+
+          {error && (
+            <div className="text-sm text-[#ef4444] bg-[#ef4444]/10 border border-[#ef4444]/30 rounded-lg px-3 py-2">
+              {error}
             </div>
-            <div>
-              <input
-                type="password"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-          </div>
-          <div>
-            <button
-              type="submit"
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            >
-              Sign in
-            </button>
-          </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-all"
+          >
+            {loading ? <Loader2 className="animate-spin" size={18} /> : <LogIn size={18} />}
+            Kirish
+          </button>
         </form>
+
+        <div className="mt-6 pt-4 border-t border-[#2a2e37] text-xs text-[#64748b]">
+          <p className="font-semibold text-[#94a3b8] mb-1">Standart hisoblar:</p>
+          <p>user1@local / user1pass</p>
+          <p>user2@local / user2pass</p>
+          <p>user3@local / user3pass</p>
+        </div>
       </div>
     </div>
   )

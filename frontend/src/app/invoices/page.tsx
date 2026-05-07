@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState, Fragment } from 'react';
 import { FileText, Search, Filter, MoreVertical, RefreshCcw, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, authFetch } from '@/lib/api';
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -11,7 +11,7 @@ export default function InvoicesPage() {
   const fetchInvoices = async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl('/api/invoices/'));
+      const res = await authFetch(apiUrl('/api/invoices/'));
       const data = await res.json();
       if (Array.isArray(data)) {
         setInvoices(data);

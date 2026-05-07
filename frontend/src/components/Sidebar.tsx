@@ -1,7 +1,8 @@
 'use client';
 import {
   LayoutDashboard, ShoppingBag, Package, FileText, CreditCard,
-  Settings, RefreshCcw, RotateCcw, Sun, Moon, Store, ChevronDown, CheckCircle2
+  Settings, RefreshCcw, RotateCcw, Sun, Moon, Store, ChevronDown, CheckCircle2,
+  BookOpen
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -16,6 +17,7 @@ const menuItems = [
   { icon: RotateCcw, label: 'Qaytarishlar', href: '/returns' },
   { icon: CreditCard, label: 'Moliya', href: '/finance' },
   { icon: RefreshCcw, label: 'FBS', href: '/fbs' },
+  { icon: BookOpen, label: 'API Hujjatlar', href: '/docs' },
 ];
 
 export default function Sidebar() {
@@ -23,7 +25,7 @@ export default function Sidebar() {
   const [theme, setTheme] = useState('dark');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { shops, selectedShopId, setSelectedShopId, loading } = useShop();
+  const { shops, selectedShopIds, toggleShop, selectAll, loading } = useShop();
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'dark';
@@ -55,9 +57,14 @@ export default function Sidebar() {
     }
   };
 
-  const selectedShopName = selectedShopId === null
-    ? "Barcha do'konlar"
-    : shops.find(s => s.id === selectedShopId)?.name ?? "Do'kon tanlang";
+  const selectedShopName = (() => {
+    if (selectedShopIds.length === 0) return "Barcha do'konlar";
+    if (selectedShopIds.length === 1) {
+      return shops.find(s => s.id === selectedShopIds[0])?.name ?? "Do'kon tanlang";
+    }
+    return `${selectedShopIds.length} ta do'kon tanlangan`;
+  })();
+  const allSelected = selectedShopIds.length === 0;
 
   return (
     <aside className="w-[260px] h-screen bg-[var(--surface)] border-r border-[var(--border)] flex flex-col py-6 px-4 fixed left-0 top-0 transition-colors duration-300 overflow-y-auto">
@@ -88,60 +95,85 @@ export default function Sidebar() {
 
         {/* Dropdown */}
         {dropdownOpen && !loading && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 z-50 overflow-hidden max-h-[280px] overflow-y-auto">
-            {/* All Shops option */}
+          <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 z-50 overflow-hidden max-h-[400px] overflow-y-auto">
+            {/* "Barcha do'konlar" — multi-select'ni tozalaydi */}
             <button
               id="shop-all-option"
-              onClick={() => { setSelectedShopId(null); setDropdownOpen(false); }}
+              onClick={() => { selectAll(); }}
               className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm transition-all hover:bg-[var(--surface-hover)] ${
-                selectedShopId === null
-                  ? 'text-[var(--accent)] font-semibold'
+                allSelected
+                  ? 'text-[var(--accent)] font-semibold bg-[var(--accent)]/5'
                   : 'text-[var(--text-secondary)]'
               }`}
             >
               <Store size={14} className="shrink-0" />
               <span className="flex-1 text-left">Barcha do'konlar</span>
-              {selectedShopId === null && <CheckCircle2 size={14} className="text-[var(--accent)]" />}
+              {allSelected && <CheckCircle2 size={14} className="text-[var(--accent)]" />}
             </button>
 
             {/* Divider */}
             <div className="border-t border-[var(--border)] mx-2 my-1" />
 
-            {/* Individual shops */}
+            {/* Multi-select shop list */}
             {shops.length === 0 ? (
               <div className="px-3 py-4 text-center text-xs text-[var(--text-secondary)]">
                 Avval sinxronizatsiya qiling
               </div>
             ) : (
-              shops.map(shop => (
-                <button
-                  key={shop.id}
-                  id={`shop-option-${shop.id}`}
-                  onClick={() => { setSelectedShopId(shop.id); setDropdownOpen(false); }}
-                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm transition-all hover:bg-[var(--surface-hover)] ${
-                    selectedShopId === shop.id
-                      ? 'text-[var(--accent)] font-semibold'
-                      : 'text-[var(--text-secondary)]'
-                  }`}
-                >
-                  <div className="w-5 h-5 rounded-md bg-[var(--accent)]/10 flex items-center justify-center shrink-0">
-                    <span className="text-[9px] font-bold text-[var(--accent)]">
-                      {shop.name.substring(0, 2).toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="flex-1 text-left min-w-0">
-                    <div className="truncate font-medium">{shop.name}</div>
-                    <div className="text-[10px] text-[var(--text-secondary)] flex gap-2">
-                      <span>{shop.product_count} mahsulot</span>
-                      <span>·</span>
-                      <span>{shop.order_count} buyurtma</span>
+              shops.map(shop => {
+                const isChecked = selectedShopIds.includes(shop.id);
+                return (
+                  <button
+                    key={shop.id}
+                    id={`shop-option-${shop.id}`}
+                    onClick={() => { toggleShop(shop.id); }}
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm transition-all hover:bg-[var(--surface-hover)] ${
+                      isChecked
+                        ? 'text-[var(--accent)] font-semibold'
+                        : 'text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    {/* Checkbox */}
+                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${
+                      isChecked
+                        ? 'bg-[var(--accent)] border-[var(--accent)]'
+                        : 'border-[var(--border)] bg-transparent'
+                    }`}>
+                      {isChecked && (
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 6.5L4.5 9L10 3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
                     </div>
-                  </div>
-                  {selectedShopId === shop.id && (
-                    <CheckCircle2 size={14} className="text-[var(--accent)] shrink-0" />
-                  )}
+                    <div className="w-5 h-5 rounded-md bg-[var(--accent)]/10 flex items-center justify-center shrink-0">
+                      <span className="text-[9px] font-bold text-[var(--accent)]">
+                        {shop.name.substring(0, 2).toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex-1 text-left min-w-0">
+                      <div className="truncate font-medium">{shop.name}</div>
+                      <div className="text-[10px] text-[var(--text-secondary)] flex gap-2">
+                        <span>{shop.product_count} mahsulot</span>
+                        <span>·</span>
+                        <span>{shop.order_count} buyurtma</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+
+            {/* Tagligida tanlanganlar soni */}
+            {selectedShopIds.length > 0 && (
+              <div className="border-t border-[var(--border)] px-3 py-2 text-[11px] text-[var(--text-secondary)] flex justify-between items-center bg-[var(--surface-hover)]/30">
+                <span>{selectedShopIds.length} ta tanlangan</span>
+                <button
+                  onClick={() => selectAll()}
+                  className="text-[var(--accent)] hover:underline"
+                >
+                  Tozalash
                 </button>
-              ))
+              </div>
             )}
           </div>
         )}

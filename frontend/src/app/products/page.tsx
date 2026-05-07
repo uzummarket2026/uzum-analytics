@@ -2,10 +2,10 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Package, Search, RefreshCcw, ChevronRight, ChevronDown, Loader2, Store, TrendingDown, TrendingUp } from 'lucide-react';
 import { useShop } from '@/context/ShopContext';
-import { apiUrl, API_BASE_URL } from '@/lib/api';
+import { apiUrl, authFetch, API_BASE_URL } from '@/lib/api';
 
 export default function ProductsPage() {
-  const { shops, selectedShopId, selectedShop } = useShop();
+  const { shops, selectedShopIds, selectedShop } = useShop();
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -14,13 +14,15 @@ export default function ProductsPage() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const itemsPerPage = 30;
 
-  useEffect(() => { fetchData(); }, [selectedShopId]);
+  useEffect(() => { fetchData(); }, [selectedShopIds]);
 
   async function fetchData() {
     setLoading(true);
     try {
-      const params = selectedShopId ? `?shop_id=${selectedShopId}` : '';
-      const res = await fetch(apiUrl(`/api/products/${params}`));
+      const p = new URLSearchParams();
+      selectedShopIds.forEach(id => p.append('shop_ids', String(id)));
+      const params = p.toString() ? `?${p.toString()}` : '';
+      const res = await authFetch(apiUrl(`/api/products/${params}`));
       const data = await res.json();
       if (Array.isArray(data)) setProducts(data);
     } catch (error) {
@@ -33,7 +35,7 @@ export default function ProductsPage() {
   async function handleSync() {
     setLoading(true);
     try {
-      await fetch(apiUrl('/api/sync/all'), { method: 'POST' });
+      await authFetch(apiUrl('/api/sync/all'), { method: 'POST' });
       await new Promise(r => setTimeout(r, 3000));
       await fetchData();
     } catch (error) {
@@ -87,7 +89,11 @@ export default function ProductsPage() {
   const totalStock = products.reduce((s, p) => s + (p.fbo_stock || 0) + (p.fbs_stock || 0), 0);
   const outOfStockSkus = products.filter(p => (p.fbo_stock || 0) + (p.fbs_stock || 0) === 0).length;
   const inStockSkus = totalSkus - outOfStockSkus;
-  const shopLabel = selectedShop ? selectedShop.name : "Barcha do'konlar";
+  const shopLabel = selectedShopIds.length === 0
+    ? "Barcha do'konlar"
+    : selectedShopIds.length === 1
+      ? (selectedShop?.name ?? `Do'kon #${selectedShopIds[0]}`)
+      : `${selectedShopIds.length} ta do'kon`;
 
   return (
     <div className="flex flex-col gap-6">

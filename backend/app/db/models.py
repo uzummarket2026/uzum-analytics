@@ -15,19 +15,21 @@ class Shop(Base):
     __tablename__ = "shops"
 
     id = Column(Integer, primary_key=True, index=True)
-    uzum_shop_id = Column(BigInteger, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    uzum_shop_id = Column(BigInteger, index=True)  # endi unique emas — har user'da o'z shopi
     name = Column(String, index=True)
     is_active = Column(Boolean, default=True)
-    
+
     products = relationship("Product", back_populates="shop")
 
 class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id"))
     uzum_product_id = Column(BigInteger, index=True)
-    sku_id = Column(BigInteger, unique=True, index=True)
+    sku_id = Column(BigInteger, index=True)  # unique emas — har user'da bir xil sku bo'lishi mumkin
     sku_code = Column(String, index=True)
     title = Column(String, index=True)
     description = Column(String)
@@ -47,7 +49,8 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    uzum_order_id = Column(BigInteger, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    uzum_order_id = Column(BigInteger, index=True)  # unique emas — har user'da bo'lishi mumkin
     main_order_id = Column(BigInteger, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True, index=True)
     uzum_shop_id = Column(BigInteger, nullable=True, index=True)
@@ -76,6 +79,7 @@ class Expense(Base):
     __tablename__ = "expenses"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id"))
     uzum_payment_id = Column(BigInteger, unique=True, index=True, nullable=True)
     amount = Column(Float)
@@ -91,8 +95,9 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id"))
-    uzum_invoice_id = Column(BigInteger, unique=True, index=True)
+    uzum_invoice_id = Column(BigInteger, index=True)
     status = Column(String)
     invoice_type = Column(String) # supply, return
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -101,8 +106,9 @@ class FbsOrder(Base):
     __tablename__ = "fbs_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id"))
-    uzum_order_id = Column(BigInteger, unique=True, index=True)
+    uzum_order_id = Column(BigInteger, index=True)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -110,8 +116,9 @@ class Return(Base):
     __tablename__ = "returns"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id"))
-    uzum_return_id = Column(BigInteger, unique=True, index=True)
+    uzum_return_id = Column(BigInteger, index=True)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
@@ -147,7 +154,8 @@ class InvoiceItem(Base):
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    key = Column(String, index=True)  # endi unique emas — har user uchun alohida
     value = Column(String)
 
 

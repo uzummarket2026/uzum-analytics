@@ -8,11 +8,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_api_token(db) -> str:
-    setting = db.query(SystemSetting).filter(SystemSetting.key == "uzum_api_token").first()
+def get_api_token(db, user_id: int) -> str:
+    """Foydalanuvchining shaxsiy Uzum API tokeni."""
+    setting = db.query(SystemSetting).filter(
+        SystemSetting.user_id == user_id,
+        SystemSetting.key == "uzum_api_token",
+    ).first()
     if setting and setting.value:
         return setting.value
-    return settings.UZUM_API_TOKEN
+    return ""
 
 def safe_float(value, default=0.0):
     if value is None:
@@ -31,88 +35,71 @@ def safe_int(value, default=0):
         return default
 
 def safe_url(url_data):
-    log_path = r"c:\Users\user\Desktop\uzum Pyton\backend\image_debug.txt"
-    try:
-        with open(log_path, "a") as f:
-            f.write(f"CALL with: {url_data}\n")
-    except:
-        pass
-
+    """Uzum rasm URL'ini standart formatga keltirish."""
     if not url_data:
         return None
-        
+
     if isinstance(url_data, dict):
         url_data = url_data.get("high") or url_data.get("low") or url_data.get("photoKey") or url_data.get("url")
-    
+
     if isinstance(url_data, str):
         url_data = url_data.strip()
-        if not url_data: return None
-        
-        res = url_data
+        if not url_data:
+            return None
+
         if url_data.startswith("https://") or url_data.startswith("http://"):
             res = url_data
         elif url_data.startswith("//"):
             res = f"https:{url_data}"
         elif "/" not in url_data:
-            res = f"https://images.uzum.uz/{url_data}/t_product_540_high.jpg"
-            return res # Allaqachon suffix qo'shildi
+            return f"https://images.uzum.uz/{url_data}/t_product_540_high.jpg"
         elif url_data.startswith("/"):
             res = f"https://images.uzum.uz{url_data}"
         else:
             res = f"https://images.uzum.uz/{url_data}"
-        
-        # Muhim: Agar URL'da nuqta bo'lmasa (ya'ni kengaytma yo'q bo'lsa)
-        # yoki u /t_product bilan tugamasa, suffix qo'shamiz
+
         if "images.uzum.uz" in res and not any(ext in res.lower() for ext in [".jpg", ".png", ".jpeg", ".webp"]):
             if not res.endswith("/"):
                 res += "/"
             res += "t_product_540_high.jpg"
-            
-        try:
-            with open(log_path, "a") as f:
-                f.write(f"FINAL: {res}\n")
-        except:
-            pass
         return res
-            
+
     return str(url_data) if url_data else None
 
-def sync_uzum_data_task() -> str:
+def sync_uzum_data_task(user_id: int) -> str:
+    """Foydalanuvchining do'konlari va mahsulotlarini sinxronlash."""
     db = SessionLocal()
     try:
-        log_file = "c:/Users/user/Desktop/uzum Pyton/scratch/sync_log.txt"
-        try:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"\n--- Sinxronizatsiya boshlandi: {datetime.now()} ---\n")
-        except:
-            pass
-        
-        token = get_api_token(db)
+        logger.info(f"Sinxronizatsiya boshlandi (user={user_id}): {datetime.now()}")
+        token = get_api_token(db, user_id)
         if not token:
-            logger.error("XATO: Uzum API token topilmadi!")
+            logger.error(f"XATO: user {user_id} uchun Uzum API token topilmadi!")
             return "Token topilmadi"
-        
+
         client = UzumClient(token)
-        
-        # 1. Sync Shops
+
+        # 1. Sync Shops (faqat shu user'ga tegishli)
         try:
             shops_data = client.get_shops()
             logger.info(f"API dan kelgan do'konlar soni: {len(shops_data) if shops_data else 0}")
-            
+
             if not shops_data:
                 logger.warning("OGOHLANTIRISH: Do'konlar ro'yxati bo'sh keldi.")
-            
-            # Reset is_active for all shops before syncing
-            db.query(Shop).update({Shop.is_active: False})
-            
+
+            # Bu user'ning shoplarini avval is_active=False qilamiz
+            db.query(Shop).filter(Shop.user_id == user_id).update({Shop.is_active: False})
+
             for shop_info in shops_data:
                 shop_id = shop_info.get("id")
                 name = shop_info.get("name", "Unknown Shop")
                 logger.info(f"Do'kon saqlanmoqda: {name} (ID: {shop_id})")
-                
-                shop = db.query(Shop).filter(Shop.uzum_shop_id == shop_id).first()
+
+                shop = db.query(Shop).filter(
+                    Shop.user_id == user_id,
+                    Shop.uzum_shop_id == shop_id,
+                ).first()
                 if not shop:
-                    shop = Shop(uzum_shop_id=shop_id, name=name, is_active=True)
+                    shop = Shop(user_id=user_id, uzum_shop_id=shop_id, name=name, is_active=True)
                     db.add(shop)
                 else:
                     shop.name = name
@@ -120,9 +107,12 @@ def sync_uzum_data_task() -> str:
             db.commit()
         except Exception as e:
             logger.error(f"Do'konlarni sinxronlashda xato: {e}")
-        
+
         product_sync_count = 0
-        db_shops = db.query(Shop).filter(Shop.is_active == True).all()
+        db_shops = db.query(Shop).filter(
+            Shop.user_id == user_id,
+            Shop.is_active == True,
+        ).all()
         logger.info(f"Faol do'konlar soni: {len(db_shops)}")
         
         for shop in db_shops:
@@ -152,13 +142,7 @@ def sync_uzum_data_task() -> str:
                     for p_card in current_batch:
                         product_title = p_card.get("title", "Unknown")
                         uzum_product_id = p_card.get("productId")
-                        product_main_image = safe_url(
-                            p_card.get("image") or 
-                            p_card.get("previewImg") or 
-                            p_card.get("previewImage") or 
-                            p_card.get("photoKey") or
-                            p_card.get("photo")
-                        )
+                        product_main_image = safe_url(p_card.get("image") or p_card.get("previewImg"))
                         
                         sku_items = p_card.get('skuList', [])
                         for sku_data in sku_items:
@@ -167,29 +151,29 @@ def sync_uzum_data_task() -> str:
                             
                             sku_title = sku_data.get("skuFullTitle") or sku_data.get("skuTitle") or product_title
                             sku_code = sku_data.get("article") or sku_data.get("sellerItemCode") or str(sku_id)
-                            sku_image = safe_url(
-                                sku_data.get("previewImage") or 
-                                sku_data.get("previewImg") or
-                                sku_data.get("image") or
-                                sku_data.get("photoKey")
-                            ) or product_main_image
+                            sku_image = safe_url(sku_data.get("previewImage") or sku_data.get("previewImg")) or product_main_image
                             
-                            price = sku_data.get("price")
-                            purchase_price = sku_data.get("purchasePrice")
-                            commission_percent = sku_data.get("commission")
+                            price = safe_float(sku_data.get("price"), 0)
+                            # Tannarxni to'g'ridan-to'g'ri mahsulot shablonidan o'qiymiz
+                            purchase_price = safe_float(sku_data.get("purchasePrice"), 0)
+                            commission_percent = safe_float(sku_data.get("commission"), 0)
                             
                             fbo_stock = safe_int(sku_data.get("quantityActive"), 0)
                             fbs_stock = safe_int(sku_data.get("quantityFbs"), 0)
                             stock = fbo_stock + fbs_stock
                             
-                            product = db.query(Product).filter(Product.sku_id == sku_id).first()
+                            product = db.query(Product).filter(
+                                Product.user_id == user_id,
+                                Product.sku_id == sku_id,
+                            ).first()
                             if product:
                                 product.stock = stock
                                 product.fbo_stock = fbo_stock
                                 product.fbs_stock = fbs_stock
-                                product.price = safe_float(price)
-                                product.purchase_price = safe_float(purchase_price)
-                                product.commission_percent = safe_float(commission_percent)
+                                product.price = price
+                                if purchase_price > 0:
+                                    product.purchase_price = purchase_price
+                                product.commission_percent = commission_percent
                                 product.title = sku_title
                                 product.sku_code = sku_code
                                 product.uzum_product_id = uzum_product_id
@@ -197,18 +181,19 @@ def sync_uzum_data_task() -> str:
                                 product.image_url = sku_image
                             else:
                                 product = Product(
+                                    user_id=user_id,
                                     shop_id=shop.id,
                                     uzum_product_id=uzum_product_id,
                                     sku_id=sku_id,
                                     sku_code=sku_code,
                                     title=sku_title,
-                                    price=safe_float(price),
-                                    purchase_price=safe_float(purchase_price),
-                                    commission_percent=safe_float(commission_percent),
+                                    price=price,
+                                    purchase_price=purchase_price,
+                                    commission_percent=commission_percent,
                                     stock=stock,
                                     fbo_stock=fbo_stock,
                                     fbs_stock=fbs_stock,
-                                    image_url=sku_image
+                                    image_url=sku_image,
                                 )
                                 db.add(product)
                             product_sync_count += 1
@@ -229,215 +214,228 @@ def sync_uzum_data_task() -> str:
     finally:
         db.close()
 
-def backfill_product_purchase_prices(db=None) -> str:
-    """
-    Tannarxlarni /v1/shop/{shopId}/invoice/products API dan olib Product ga yozadi.
-    Har bir SKU uchun eng so'nggi invoice'dagi tannarx ustunlik oladi.
-    Swagger: ProductForInvoiceDto.skuForInvoiceDtoList[].purchasePrice
-    """
-    own_session = db is None
-    if own_session:
-        db = SessionLocal()
-    try:
-        token = get_api_token(db)
-        client = UzumClient(api_token=token)
-        shops = db.query(Shop).filter(Shop.is_active == True).all()
-
-        updated = 0
-        invoices_scanned = 0
-        checked_skus = set()  # bir SKU uchun faqat eng yangi invoice'dan olamiz
-
-        for shop in shops:
-            try:
-                all_invoices = []
-                page = 0
-                while page < 20:
-                    time.sleep(0.1)
-                    inv_list = client.get_invoices(shop_id=shop.uzum_shop_id, page=page, size=50)
-                    if not inv_list or not isinstance(inv_list, list):
-                        break
-                    all_invoices.extend(inv_list)
-                    if len(inv_list) < 50:
-                        break
-                    page += 1
-
-                # dateCreated DESC bo'yicha saralash (yangiroqlar oldin) — ID fallback
-                all_invoices.sort(key=lambda i: str(i.get("dateAccepted") or i.get("dateCreated") or i.get("id") or 0), reverse=True)
-
-                for inv in all_invoices:
-                    inv_id = inv.get("id")
-                    if not inv_id:
-                        continue
-
-                    time.sleep(0.1)
-                    products = client.get_invoice_products(shop.uzum_shop_id, inv_id)
-                    if not products or not isinstance(products, list):
-                        continue
-                    invoices_scanned += 1
-
-                    for prod in products:
-                        prod_level_pp = safe_float(prod.get("purchasePrice"), 0)
-                        sku_items = prod.get("skuForInvoiceDtoList") or []
-
-                        for sku in sku_items:
-                            sku_id = sku.get("id")
-                            if not sku_id or sku_id in checked_skus:
-                                continue
-
-                            pp = safe_float(sku.get("purchasePrice"), 0)
-                            if pp <= 0:
-                                pp = prod_level_pp
-                            if pp <= 0:
-                                continue
-
-                            checked_skus.add(sku_id)
-                            product = db.query(Product).filter(Product.sku_id == sku_id).first()
-                            if product and product.purchase_price != pp:
-                                product.purchase_price = pp
-                                updated += 1
-            except UzumForbiddenError:
-                continue
-            except Exception as e:
-                logger.error(f"Backfill for shop {shop.id}: {e}")
-                db.rollback()
-
-        db.commit()
-        return f"Invoice API'dan {updated} ta mahsulotga tannarx yozildi ({invoices_scanned} ta yukxat tekshirildi, {len(checked_skus)} noyob SKU)"
-    finally:
-        if own_session:
-            db.close()
+# Invoice-based backfill functions removed as they cause high DB load and are not the primary way.
 
 
-def sync_uzum_orders_task() -> str:
+ORDER_STATUSES = ["TO_WITHDRAW", "PROCESSING", "CANCELED", "PARTIALLY_CANCELLED"]
+
+
+def _upsert_order_item(db, o: dict, shop_map: dict, user_id: int) -> str:
+    """Bitta orderItem'ni saqlash. Qaytaradi: 'inserted' | 'updated' | 'skipped'."""
+    item_id = o.get("id")
+    if not item_id:
+        return "skipped"
+
+    main_order_id = o.get("orderId")
+    uzum_product_id = o.get("productId")
+    uzum_shop_id_val = o.get("shopId")
+    local_shop_id = shop_map.get(uzum_shop_id_val)
+
+    status = (o.get("status") or "PENDING").lower()
+    quantity = safe_int(o.get("amount"), 1)
+    amount_returns = safe_int(o.get("amountReturns"), 0)
+    cancelled = safe_int(o.get("cancelled"), 0)
+
+    seller_price = safe_float(o.get("sellerPrice"), 0)
+    purchase_price = safe_float(o.get("purchasePrice"), 0)
+    commission_amount = safe_float(o.get("commission"), 0)
+    logistic_fee = safe_float(o.get("logisticDeliveryFee"), 0)
+    seller_profit = safe_float(o.get("sellerProfit"), 0)
+    withdrawn_profit = safe_float(o.get("withdrawnProfit"), 0)
+
+    sku_title = o.get("skuTitle")
+    sku_char_title = o.get("skuCharTitle")
+    sku_char_value = o.get("skuCharValue")
+
+    net_qty = max(quantity - amount_returns - cancelled, 0)
+    total_price = float(seller_price * net_qty)
+
+    # Uzum kabinet "dateIssued" (rasmiylashtirilgan vaqt) ni ko'rsatadi.
+    # "date" — buyurtma yaratilgan vaqt (~1 daqiqa oldinroq).
+    date_ms = o.get("dateIssued") or o.get("date")
+    order_date = datetime.fromtimestamp(date_ms / 1000.0) if date_ms else None
+
+    product = None
+    if uzum_product_id:
+        q = db.query(Product).filter(
+            Product.user_id == user_id,
+            Product.uzum_product_id == uzum_product_id,
+        )
+        if sku_title:
+            product = q.filter(Product.title == sku_title).first() or q.first()
+        else:
+            product = q.first()
+
+    product_id = product.id if product else None
+    sku_code = product.sku_code if product else None
+
+    order = db.query(Order).filter(
+        Order.user_id == user_id,
+        Order.uzum_order_id == item_id,
+    ).first()
+    if order is None:
+        db.add(Order(
+            user_id=user_id,
+            uzum_order_id=item_id,
+            main_order_id=main_order_id,
+            shop_id=local_shop_id,
+            uzum_shop_id=uzum_shop_id_val,
+            product_id=product_id,
+            quantity=quantity,
+            amount_returns=amount_returns,
+            cancelled=cancelled,
+            total_price=total_price,
+            purchase_price=purchase_price,
+            commission_amount=commission_amount,
+            logistic_fee=logistic_fee,
+            seller_profit=seller_profit,
+            withdrawn_profit=withdrawn_profit,
+            sku_code=sku_code,
+            sku_title=sku_title,
+            sku_char_title=sku_char_title,
+            sku_char_value=sku_char_value,
+            status=status,
+            order_date=order_date,
+        ))
+        return "inserted"
+
+    order.main_order_id = main_order_id
+    order.shop_id = local_shop_id
+    order.uzum_shop_id = uzum_shop_id_val
+    if product_id:
+        order.product_id = product_id
+    order.quantity = quantity
+    order.amount_returns = amount_returns
+    order.cancelled = cancelled
+    # Pul/SKU fieldlari: null/0 kelsa eski qiymatni saqlaymiz
+    # (API ba'zi statuslarda bu qiymatlarni qaytarmaydi)
+    if total_price > 0:
+        order.total_price = total_price
+    if purchase_price > 0:
+        order.purchase_price = purchase_price
+    if commission_amount > 0:
+        order.commission_amount = commission_amount
+    if logistic_fee > 0:
+        order.logistic_fee = logistic_fee
+    if seller_profit > 0:
+        order.seller_profit = seller_profit
+    if withdrawn_profit > 0:
+        order.withdrawn_profit = withdrawn_profit
+    if sku_code:
+        order.sku_code = sku_code
+    if sku_title:
+        order.sku_title = sku_title
+    if sku_char_title:
+        order.sku_char_title = sku_char_title
+    if sku_char_value:
+        order.sku_char_value = sku_char_value
+    order.status = status
+    if order_date:
+        order.order_date = order_date
+    return "updated"
+
+
+def sync_uzum_orders_task(user_id: int) -> str:
+    """Foydalanuvchining barcha do'konlaridan buyurtmalarni sinxronlash."""
     db = SessionLocal()
     try:
-        token = get_api_token(db)
+        token = get_api_token(db, user_id)
+        if not token:
+            logger.error(f"Order sync (user={user_id}): API token topilmadi")
+            return "Token topilmadi"
+
         client = UzumClient(api_token=token)
-        shops = db.query(Shop).filter(Shop.is_active == True).all()
-        if not shops: return "Do'konlar yo'q."
-        
-        # Uzum Shop ID -> local Shop ID xaritasi
+        shops = db.query(Shop).filter(
+            Shop.user_id == user_id,
+            Shop.is_active == True,
+        ).all()
+        if not shops:
+            return "Do'konlar yo'q."
+
         shop_map = {shop.uzum_shop_id: shop.id for shop in shops}
-        all_uzum_shop_ids = list(shop_map.keys())
-            
-        sync_count = 0
-        date_from = int((time.time() - 30 * 24 * 60 * 60) * 1000) # Swagger: date in milliseconds
-        
-        # Barcha do'konlar uchun birgalikda so'rov yuborish
-        try:
+        uzum_shop_ids = list(shop_map.keys())
+
+        PAGE_SIZE = 100
+        MAX_PAGES = 10000
+        EMPTY_RETRIES = 2
+
+        totals = {"inserted": 0, "updated": 0, "skipped": 0}
+        seen_ids = set()
+        pages_total = 0
+
+        for status in ORDER_STATUSES:
             page = 0
-            while page < 1000:
-                time.sleep(0.1)
-                orders_data = client.get_orders(shop_ids=all_uzum_shop_ids, date_from=date_from, page=page, size=100)
-                
-                if not orders_data or 'orderItems' not in orders_data or not orders_data['orderItems']:
+            empty_in_a_row = 0
+            status_count = 0
+
+            while page < MAX_PAGES:
+                try:
+                    resp = client.get_orders(
+                        shop_ids=uzum_shop_ids,
+                        page=page,
+                        size=PAGE_SIZE,
+                        group=False,
+                        statuses=[status],
+                    )
+                except Exception as e:
+                    logger.error(f"Order sync [{status}]: page {page} xato: {e}")
                     break
 
-                for o_data in orders_data['orderItems']:
-                    # Swagger: id (orderItem ID), orderId, shopId, amount, sellerPrice, purchasePrice, commission, logisticDeliveryFee, sellerProfit
-                    uzum_item_id = o_data.get('id')
-                    uzum_order_id = o_data.get('orderId')
-                    uzum_product_id = o_data.get('productId')
-                    uzum_shop_id_val = o_data.get('shopId')
-                    local_shop_id = shop_map.get(uzum_shop_id_val)
-                    status = o_data.get('status', 'PENDING')
-                    quantity = safe_int(o_data.get('amount'), 1)
-                    amount_returns = safe_int(o_data.get('amountReturns'), 0)
-                    cancelled = safe_int(o_data.get('cancelled'), 0)
-                    price = safe_float(o_data.get('sellerPrice'), 0)
-                    purchase_price = safe_float(o_data.get('purchasePrice'), 0)
-                    commission_amount = safe_float(o_data.get('commission'), 0)
-                    logistic_fee = safe_float(o_data.get('logisticDeliveryFee'), 0)
-                    seller_profit = safe_float(o_data.get('sellerProfit'), 0)
-                    withdrawn_profit = safe_float(o_data.get('withdrawnProfit'), 0)
-                    
-                    sku_title = o_data.get('skuTitle')
-                    sku_char_title = o_data.get('skuCharTitle')
-                    sku_char_value = o_data.get('skuCharValue')
-                    
-                    product = db.query(Product).filter(
-                        Product.uzum_product_id == uzum_product_id,
-                        Product.title == sku_title
-                    ).first()
-                    
-                    sku_code = product.sku_code if product else None
+                items = (resp or {}).get("orderItems") or []
+                pages_total += 1
 
-                    order = db.query(Order).filter(Order.uzum_order_id == uzum_item_id).first()
-                    order_timestamp = o_data.get('date') # Unix Epoch ms
-                    order_date = None
-                    if order_timestamp:
-                        from datetime import datetime
-                        order_date = datetime.fromtimestamp(order_timestamp / 1000.0)
+                if not items:
+                    empty_in_a_row += 1
+                    if empty_in_a_row >= EMPTY_RETRIES:
+                        break
+                    page += 1
+                    time.sleep(0.2)
+                    continue
+                empty_in_a_row = 0
 
-                    net_quantity = max(quantity - amount_returns, 0)
-                    total_price_val = float(price * net_quantity)
+                for o in items:
+                    item_id = o.get("id")
+                    if not item_id or item_id in seen_ids:
+                        totals["skipped"] += 1
+                        continue
+                    seen_ids.add(item_id)
+                    result = _upsert_order_item(db, o, shop_map, user_id)
+                    totals[result] = totals.get(result, 0) + 1
+                    status_count += 1
 
-                    if not order:
-                        order = Order(
-                            uzum_order_id=uzum_item_id,
-                            main_order_id=uzum_order_id,
-                            shop_id=local_shop_id,
-                            uzum_shop_id=uzum_shop_id_val,
-                            product_id=product.id if product else None,
-                            quantity=quantity,
-                            amount_returns=amount_returns,
-                            cancelled=cancelled,
-                            total_price=total_price_val,
-                            purchase_price=purchase_price,
-                            commission_amount=commission_amount,
-                            logistic_fee=logistic_fee,
-                            seller_profit=seller_profit,
-                            withdrawn_profit=withdrawn_profit,
-                            sku_code=sku_code,
-                            sku_title=sku_title,
-                            sku_char_title=sku_char_title,
-                            sku_char_value=sku_char_value,
-                            status=status.lower(),
-                            order_date=order_date,
-                        )
-                        db.add(order)
-                        sync_count += 1
-                    else:
-                        order.status = status.lower()
-                        order.main_order_id = uzum_order_id
-                        order.shop_id = local_shop_id
-                        order.uzum_shop_id = uzum_shop_id_val
-                        order.quantity = quantity
-                        order.amount_returns = amount_returns
-                        order.cancelled = cancelled
-                        order.total_price = total_price_val
-                        order.purchase_price = purchase_price
-                        order.commission_amount = commission_amount
-                        order.logistic_fee = logistic_fee
-                        order.seller_profit = seller_profit
-                        order.withdrawn_profit = withdrawn_profit
-                        order.sku_code = sku_code
-                        order.sku_title = sku_title
-                        order.sku_char_title = sku_char_title
-                        order.sku_char_value = sku_char_value
-                        if order_date:
-                            order.order_date = order_date
-                
-                if len(orders_data['orderItems']) < 100:
+                try:
+                    db.commit()
+                except Exception as e:
+                    logger.error(f"Order sync [{status}]: page {page} commit xato: {e}")
+                    db.rollback()
+
+                if len(items) < PAGE_SIZE:
                     break
                 page += 1
-                
-            db.commit()
-        except Exception as e:
-            logger.error(f"Order sync error: {e}")
-            db.rollback()
+                time.sleep(0.1)
 
-        return f"{sync_count} ta buyurtma sinxronlandi."
+            logger.info(f"Order sync [{status}]: {status_count} item, {page+1} sahifa")
+
+        logger.info(
+            f"Order sync tugadi: {totals['inserted']} yangi, "
+            f"{totals['updated']} yangilandi, {totals['skipped']} o'tkazib yuborildi, "
+            f"jami {pages_total} sahifa"
+        )
+        return f"{totals['inserted']} yangi, {totals['updated']} yangilandi."
     finally:
         db.close()
 
-def sync_expenses_task() -> str:
+def sync_expenses_task(user_id: int) -> str:
     db = SessionLocal()
     try:
-        token = get_api_token(db)
+        token = get_api_token(db, user_id)
+        if not token:
+            return "Token topilmadi"
         client = UzumClient(api_token=token)
-        shops = db.query(Shop).filter(Shop.is_active == True).all()
+        shops = db.query(Shop).filter(Shop.user_id == user_id, Shop.is_active == True).all()
         uzum_shop_ids = [shop.uzum_shop_id for shop in shops if shop.uzum_shop_id]
+        if not uzum_shop_ids:
+            return "Do'konlar yo'q."
         expenses_data = client.get_expenses(shop_ids=uzum_shop_ids, size=100)
         
         sync_count = 0
@@ -459,11 +457,16 @@ def sync_expenses_task() -> str:
                 if date_ms:
                     date_val = datetime.fromtimestamp(date_ms / 1000.0)
 
-                shop = db.query(Shop).filter(Shop.uzum_shop_id == shop_id).first()
+                shop = db.query(Shop).filter(
+                    Shop.user_id == user_id, Shop.uzum_shop_id == shop_id
+                ).first()
                 if not shop:
                     continue
 
-                expense = db.query(Expense).filter(Expense.uzum_payment_id == payment_id).first()
+                expense = db.query(Expense).filter(
+                    Expense.user_id == user_id,
+                    Expense.uzum_payment_id == payment_id,
+                ).first()
                 if expense:
                     expense.amount = amount
                     expense.name = name
@@ -473,6 +476,7 @@ def sync_expenses_task() -> str:
                     expense.status = status
                 else:
                     expense = Expense(
+                        user_id=user_id,
                         shop_id=shop.id,
                         uzum_payment_id=payment_id,
                         amount=amount,
@@ -490,12 +494,14 @@ def sync_expenses_task() -> str:
     finally:
         db.close()
 
-def sync_invoices_task() -> str:
+def sync_invoices_task(user_id: int) -> str:
     db = SessionLocal()
     try:
-        token = get_api_token(db)
+        token = get_api_token(db, user_id)
+        if not token:
+            return "Token topilmadi"
         client = UzumClient(api_token=token)
-        shops = db.query(Shop).filter(Shop.is_active == True).all()
+        shops = db.query(Shop).filter(Shop.user_id == user_id, Shop.is_active == True).all()
         sync_count = 0
         
         for shop in shops:
@@ -511,9 +517,12 @@ def sync_invoices_task() -> str:
                             if isinstance(invoice_status, dict) else None
                         ) or inv.get("status")
 
-                        db_inv = db.query(Invoice).filter(Invoice.uzum_invoice_id == inv_id).first()
+                        db_inv = db.query(Invoice).filter(
+                            Invoice.user_id == user_id,
+                            Invoice.uzum_invoice_id == inv_id,
+                        ).first()
                         if not db_inv:
-                            db_inv = Invoice(shop_id=shop.id, uzum_invoice_id=inv_id, status=status, invoice_type="supply")
+                            db_inv = Invoice(user_id=user_id, shop_id=shop.id, uzum_invoice_id=inv_id, status=status, invoice_type="supply")
                             db.add(db_inv)
                         else:
                             db_inv.status = status
@@ -526,17 +535,19 @@ def sync_invoices_task() -> str:
             except Exception as e:
                 logger.error(f"Invoice sync error for shop {shop.id}: {e}")
                 db.rollback()
-        backfill_msg = backfill_product_purchase_prices(db)
-        return f"{sync_count} ta yukxat sinxronlandi. {backfill_msg}"
+        
+        return f"{sync_count} ta yukxat sinxronlandi."
     finally:
         db.close()
 
-def sync_returns_task() -> str:
+def sync_returns_task(user_id: int) -> str:
     db = SessionLocal()
     try:
-        token = get_api_token(db)
+        token = get_api_token(db, user_id)
+        if not token:
+            return "Token topilmadi"
         client = UzumClient(api_token=token)
-        shops = db.query(Shop).filter(Shop.is_active == True).all()
+        shops = db.query(Shop).filter(Shop.user_id == user_id, Shop.is_active == True).all()
         sync_count = 0
         
         for shop in shops:
@@ -567,9 +578,12 @@ def sync_returns_task() -> str:
                     ret_id = ret.get("id")
                     status = ret.get("status")
                     
-                    db_ret = db.query(Return).filter(Return.uzum_return_id == ret_id).first()
+                    db_ret = db.query(Return).filter(
+                        Return.user_id == user_id,
+                        Return.uzum_return_id == ret_id,
+                    ).first()
                     if not db_ret:
-                        db_ret = Return(shop_id=shop.id, uzum_return_id=ret_id, status=status)
+                        db_ret = Return(user_id=user_id, shop_id=shop.id, uzum_return_id=ret_id, status=status)
                         db.add(db_ret)
                     else:
                         db_ret.status = status
@@ -586,14 +600,17 @@ def sync_returns_task() -> str:
     finally:
         db.close()
 
-def sync_fbs_orders_task() -> str:
+def sync_fbs_orders_task(user_id: int) -> str:
     db = SessionLocal()
     try:
-        token = get_api_token(db)
+        token = get_api_token(db, user_id)
+        if not token:
+            return "Token topilmadi"
         client = UzumClient(api_token=token)
-        shops = db.query(Shop).filter(Shop.is_active == True).all()
+        shops = db.query(Shop).filter(Shop.user_id == user_id, Shop.is_active == True).all()
         uzum_shop_ids = [shop.uzum_shop_id for shop in shops if shop.uzum_shop_id]
-        if not uzum_shop_ids: return "Do'konlar yo'q."
+        if not uzum_shop_ids:
+            return "Do'konlar yo'q."
         
         fbs_data = client.get_fbs_orders(shop_ids=uzum_shop_ids, size=50)
         sync_count = 0
@@ -603,11 +620,16 @@ def sync_fbs_orders_task() -> str:
                 status = o.get("status")
                 shop_id = o.get("shopId")
                 
-                shop = db.query(Shop).filter(Shop.uzum_shop_id == shop_id).first()
+                shop = db.query(Shop).filter(
+                    Shop.user_id == user_id, Shop.uzum_shop_id == shop_id
+                ).first()
                 if shop:
-                    fbs_order = db.query(FbsOrder).filter(FbsOrder.uzum_order_id == order_id).first()
+                    fbs_order = db.query(FbsOrder).filter(
+                        FbsOrder.user_id == user_id,
+                        FbsOrder.uzum_order_id == order_id,
+                    ).first()
                     if not fbs_order:
-                        fbs_order = FbsOrder(shop_id=shop.id, uzum_order_id=order_id, status=status)
+                        fbs_order = FbsOrder(user_id=user_id, shop_id=shop.id, uzum_order_id=order_id, status=status)
                         db.add(fbs_order)
                     else:
                         fbs_order.status = status

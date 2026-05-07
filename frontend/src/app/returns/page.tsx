@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { RefreshCcw, Loader2, RotateCcw, AlertCircle } from 'lucide-react';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, authFetch } from '@/lib/api';
 
 export default function ReturnsPage() {
   const [returns, setReturns] = useState<any[]>([]);
@@ -10,7 +10,7 @@ export default function ReturnsPage() {
   const fetchReturns = async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl('/api/returns/'));
+      const res = await authFetch(apiUrl('/api/returns/'));
       const data = await res.json();
       if (Array.isArray(data)) {
         setReturns(data);
