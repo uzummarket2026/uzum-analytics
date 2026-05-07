@@ -57,11 +57,12 @@ export default function Login() {
 
         <form className="space-y-4" onSubmit={handleLogin}>
           <input
-            type="email"
+            type="text"
             required
-            placeholder="Email"
+            placeholder="Login"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
             className="w-full bg-[#0f1115] border border-[#2a2e37] rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-[#7c3aed]"
           />
           <input

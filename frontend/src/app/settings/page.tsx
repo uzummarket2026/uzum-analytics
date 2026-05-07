@@ -221,9 +221,9 @@ export default function SettingsPage() {
                 <div key={u.id} className="bg-[#0f1115] border border-[#2a2e37] rounded-xl p-4">
                   {editingId === u.id ? (
                     <div className="space-y-3">
-                      <label className="block text-xs text-[#94a3b8]">Email (login)</label>
+                      <label className="block text-xs text-[#94a3b8]">Login</label>
                       <input
-                        type="email"
+                        type="text"
                         value={editEmail}
                         onChange={e => setEditEmail(e.target.value)}
                         className="w-full bg-[#1a1d23] border border-[#2a2e37] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-[#7c3aed]"
