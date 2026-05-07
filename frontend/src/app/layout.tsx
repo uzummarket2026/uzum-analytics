@@ -7,8 +7,8 @@ import { ShopProvider } from '@/context/ShopContext'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Uzum Market Analytics',
-  description: 'Dashboard for Uzum Market Sellers',
+  title: 'Uzum Analytics',
+  description: 'Uzum Market sotuvchilari uchun analitika',
 }
 
 export default function RootLayout({
