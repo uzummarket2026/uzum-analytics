@@ -46,10 +46,23 @@ def login_access_token(db: Session = Depends(deps.get_db), form_data: OAuth2Pass
     }
 
 
-@router.get("/me", response_model=UserResponse)
+# Eng birinchi user (id=1) — sayt egasi/admin. Hammani ko'radi va tahrirlaydi.
+ADMIN_USER_ID = 1
+
+
+def _is_admin(user: User) -> bool:
+    return user.id == ADMIN_USER_ID
+
+
+@router.get("/me")
 def me(current_user: User = Depends(deps.get_current_user)):
-    """Hozirgi foydalanuvchi haqida ma'lumot."""
-    return current_user
+    """Hozirgi foydalanuvchi (is_admin bayrog'i bilan)."""
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "is_active": current_user.is_active,
+        "is_admin": _is_admin(current_user),
+    }
 
 
 @router.get("/users", response_model=List[UserResponse])
@@ -57,8 +70,10 @@ def list_users(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
-    """Barcha foydalanuvchilar ro'yxati."""
-    return db.query(User).order_by(User.id.asc()).all()
+    """Admin — barcha userlarni ko'radi. Boshqalar — faqat o'zini."""
+    if _is_admin(current_user):
+        return db.query(User).order_by(User.id.asc()).all()
+    return [current_user]
 
 
 @router.put("/users/{user_id}", response_model=UserResponse)
@@ -68,7 +83,10 @@ def update_user(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
-    """Foydalanuvchini tahrirlash (email, parol, faollik)."""
+    """Admin — har kimni tahrirlay oladi. Boshqalar — faqat o'zini."""
+    if not _is_admin(current_user) and current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Faqat o'z hisobingizni tahrirlay olasiz")
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User topilmadi")
@@ -76,11 +94,11 @@ def update_user(
     if update.email and update.email != user.email:
         existing = db.query(User).filter(User.email == update.email, User.id != user_id).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Bu email boshqa foydalanuvchida band")
+            raise HTTPException(status_code=400, detail="Bu login boshqa foydalanuvchida band")
         user.email = update.email
     if update.password:
         user.hashed_password = security.get_password_hash(update.password)
-    if update.is_active is not None:
+    if update.is_active is not None and _is_admin(current_user):
         user.is_active = update.is_active
 
     db.commit()
