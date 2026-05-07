@@ -1,10 +1,14 @@
-from pydantic import BaseModel, EmailStr
+from typing import Optional
+from pydantic import BaseModel
+
 
 class UserBase(BaseModel):
-    email: EmailStr
+    email: str
+
 
 class UserCreate(UserBase):
     password: str
+
 
 class UserResponse(UserBase):
     id: int
@@ -16,6 +20,6 @@ class UserResponse(UserBase):
 
 class UserUpdate(BaseModel):
     """Foydalanuvchini tahrirlash — har bir maydon ixtiyoriy."""
-    email: EmailStr | None = None
-    password: str | None = None
-    is_active: bool | None = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
