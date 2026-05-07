@@ -2,12 +2,13 @@
 import {
   LayoutDashboard, ShoppingBag, Package, FileText, CreditCard,
   Settings, RefreshCcw, RotateCcw, Sun, Moon, Store, ChevronDown, CheckCircle2,
-  BookOpen
+  BookOpen, LogOut
 } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useShop } from '@/context/ShopContext';
+import { clearToken } from '@/lib/api';
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', href: '/' },
@@ -22,6 +23,15 @@ const menuItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = () => {
+    if (confirm("Hisobingizdan chiqishni xohlaysizmi?")) {
+      clearToken();
+      router.replace('/login');
+    }
+  };
+
   const [theme, setTheme] = useState('dark');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -220,6 +230,14 @@ export default function Sidebar() {
           <Settings size={20} />
           <span>Sozlamalar</span>
         </Link>
+
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-3 px-4 py-3 rounded-xl text-[#ef4444] hover:bg-[#ef4444]/10 transition-all"
+        >
+          <LogOut size={20} />
+          <span>Chiqish</span>
+        </button>
       </div>
     </aside>
   );
