@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.db.models import User
-from app.schemas.token import TokenData
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"/api/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
 
 def get_db() -> Generator:
     try:
@@ -17,7 +17,15 @@ def get_db() -> Generator:
     finally:
         db.close()
 
-def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> User:
+
+def get_current_user(
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
+) -> User:
+    """JWT'dan user.id ni o'qib, foydalanuvchini qaytaradi.
+
+    Eski (email'li) tokenlar ham orqaga moslik uchun qabul qilinadi.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -25,14 +33,24 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
     )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
+        sub = payload.get("sub")
+        if sub is None:
             raise credentials_exception
-        token_data = TokenData(email=email)
     except JWTError:
         raise credentials_exception
-    
-    user = db.query(User).filter(User.email == token_data.email).first()
-    if user is None:
+
+    user = None
+    # Yangi format: sub = user.id (string)
+    try:
+        uid = int(sub)
+        user = db.query(User).filter(User.id == uid).first()
+    except (TypeError, ValueError):
+        pass
+
+    # Orqaga moslik: eski tokenlar email saqlagan
+    if user is None and isinstance(sub, str) and "@" in sub:
+        user = db.query(User).filter(User.email == sub).first()
+
+    if user is None or not user.is_active:
         raise credentials_exception
     return user

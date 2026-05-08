@@ -28,9 +28,13 @@ services:
     container_name: uzum_backend_prod
     restart: always
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-uzum_user}:${POSTGRES_PASSWORD:-uzum_password}@db:5432/${POSTGRES_DB:-uzum_db}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@db:5432/${POSTGRES_DB:-uzum_db}
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY required in production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - ENV=production
+      - INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL:-}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
       - JWT_ALGORITHM=HS256
     depends_on:
       - db
@@ -46,8 +50,11 @@ services:
     restart: always
     command: celery -A app.worker.celery_app worker --loglevel=info
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-uzum_user}:${POSTGRES_PASSWORD:-uzum_password}@db:5432/${POSTGRES_DB:-uzum_db}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@db:5432/${POSTGRES_DB:-uzum_db}
       - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY required in production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - ENV=production
     depends_on:
       - db
       - redis

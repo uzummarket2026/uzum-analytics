@@ -1,7 +1,9 @@
 from datetime import timedelta
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 from app.api import deps
 from app.core import security
@@ -11,9 +13,18 @@ from app.schemas.token import Token
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/register", response_model=UserResponse)
-def register(user_in: UserCreate, db: Session = Depends(deps.get_db)):
+def register(
+    user_in: UserCreate,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """Yangi foydalanuvchi yaratish — faqat admin."""
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Faqat admin yangi user yarata oladi")
+
     user = db.query(User).filter(User.email == user_in.email).first()
     if user:
         raise HTTPException(
@@ -30,28 +41,31 @@ def register(user_in: UserCreate, db: Session = Depends(deps.get_db)):
     db.refresh(db_user)
     return db_user
 
+
 @router.post("/login", response_model=Token)
-def login_access_token(db: Session = Depends(deps.get_db), form_data: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit("10/minute")
+def login_access_token(
+    request: Request,
+    db: Session = Depends(deps.get_db),
+    form_data: OAuth2PasswordRequestForm = Depends(),
+):
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-    elif not user.is_active:
+    if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {
         "access_token": security.create_access_token(
-            {"sub": user.email}, expires_delta=access_token_expires
+            {"sub": str(user.id)}, expires_delta=access_token_expires
         ),
         "token_type": "bearer",
     }
 
 
-# Eng birinchi user (id=1) — sayt egasi/admin. Hammani ko'radi va tahrirlaydi.
-ADMIN_USER_ID = 1
-
-
 def _is_admin(user: User) -> bool:
-    return user.id == ADMIN_USER_ID
+    """Admin = users.is_admin=True. Heuristika emas, DB ustuni."""
+    return bool(getattr(user, "is_admin", False))
 
 
 @router.get("/me")

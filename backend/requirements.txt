@@ -15,3 +15,5 @@ psycopg2-binary
 redis
 celery
 apscheduler
+cryptography
+slowapi

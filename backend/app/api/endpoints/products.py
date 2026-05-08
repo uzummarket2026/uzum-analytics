@@ -43,7 +43,8 @@ def get_product_summary(
 
 @router.get("/", response_model=List[ProductResponse])
 def read_products(
-    skip: int = 0,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=5000),
     shop_id: Optional[int] = Query(None, description="Bitta do'kon"),
     shop_ids: Optional[List[int]] = Query(None, description="Bir nechta do'kon"),
     db: Session = Depends(deps.get_db),
@@ -55,79 +56,108 @@ def read_products(
         query = query.filter(Product.shop_id.in_(shop_ids))
     elif shop_id is not None:
         query = query.filter(Product.shop_id == shop_id)
-    products = query.offset(skip).all()
+    products = query.order_by(Product.id.asc()).offset(skip).limit(limit).all()
     return products
 
 @router.get("/image-proxy")
 async def image_proxy(url: str):
+    """Uzum rasm serveridan rasmni proxy orqali qaytaradi.
+
+    Auth qo'yilmaydi — chunki <img src> brauzerdan Authorization yubormaydi.
+    O'rniga: faqat whitelist hostlarga, redirect'siz, faqat image/* javob.
     """
-    Uzum rasm serveridan rasmni proxy orqali qaytaradi.
-    Hotlinking blokidan o'tish uchun: so'rov brauzerdan emas, serverdan boradi.
-    """
-    if not url or "images.uzum.uz" not in url:
+    from urllib.parse import urlparse
+
+    ALLOWED_HOSTS = {"images.uzum.uz", "static.uzum.uz"}
+
+    parsed = urlparse(url)
+    # Faqat absolyut http(s) URL'lar va whitelist'dagi xostlar
+    if parsed.scheme not in ("http", "https") or parsed.hostname not in ALLOWED_HOSTS:
         return Response(status_code=400, content="Invalid URL")
-    
-    # URL to'liq formatga keltirish
-    if not url.endswith(".jpg") and not url.endswith(".png") and not url.endswith(".webp"):
+
+    # URL to'liq formatga keltirish (kengaytma yo'q bo'lsa)
+    if not any(url.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
         if not url.endswith("/"):
             url += "/"
         url += "t_product_540_high.jpg"
-    
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://seller.uzum.uz/",
         "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
     }
-    
+
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, headers=headers, follow_redirects=True)
-            
+        # follow_redirects=False — SSRF redirect-attack'larni oldini olish
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            resp = await client.get(url, headers=headers)
+
             if resp.status_code == 200:
                 content_type = resp.headers.get("content-type", "image/jpeg")
+                if not content_type.startswith("image/"):
+                    return Response(status_code=400, content="Not an image")
                 return Response(
                     content=resp.content,
                     media_type=content_type,
-                    headers={"Cache-Control": "public, max-age=86400"}
+                    headers={"Cache-Control": "public, max-age=86400"},
                 )
-            else:
-                return Response(status_code=resp.status_code)
-    except Exception as e:
-        return Response(status_code=500, content=str(e))
+            return Response(status_code=resp.status_code)
+    except Exception:
+        return Response(status_code=502, content="Upstream error")
 
 @router.post("/sync")
-def sync_products(background_tasks: BackgroundTasks, db: Session = Depends(deps.get_db)):
+def sync_products(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(deps.get_current_user),
+):
+    """Joriy foydalanuvchining do'kon va mahsulotlarini sinxronlash."""
     from app.worker.tasks import sync_uzum_data_task
-    background_tasks.add_task(sync_uzum_data_task)
+    background_tasks.add_task(sync_uzum_data_task, current_user.id)
     return {"message": "Shop and Product sync started in background"}
 
-@router.post("/backfill-purchase-price")
-def backfill_purchase_price(background_tasks: BackgroundTasks):
-    """Invoice API'dan tannarxlarni olib mahsulotlarga yozish (fonda)."""
-    from app.worker.tasks import backfill_product_purchase_prices
-    background_tasks.add_task(backfill_product_purchase_prices)
-    return {"message": "Tannarx sinxronlash fonda boshlandi. Yakunlangach sahifani yangilang."}
-
-@router.post("/backfill-from-orders")
-def backfill_from_orders(db: Session = Depends(deps.get_db)):
-    """Orders jadvalidan (OrderItemDto.purchasePrice) tannarxlarni mahsulotlarga yozish. Darhol."""
-    from app.worker.tasks import backfill_purchase_prices_from_orders
-    result = backfill_purchase_prices_from_orders(db)
-    return {"message": result}
 
 from app.services.uzum_client import UzumClient
-from app.core.config import settings
+from app.worker.tasks import get_api_token
+
 
 @router.post("/price")
-def update_product_price(shop_id: int, price_data: dict):
-    client = UzumClient(api_token=settings.UZUM_API_TOKEN)
-    if client.update_prices(shop_id, price_data):
+def update_product_price(
+    shop_id: int,
+    price_data: dict,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """Joriy foydalanuvchining do'koni uchun narx yangilash."""
+    from app.db.models import Shop
+    shop = db.query(Shop).filter(
+        Shop.id == shop_id,
+        Shop.user_id == current_user.id,
+    ).first()
+    if not shop:
+        return {"error": "Do'kon topilmadi yoki sizniki emas"}
+
+    token = get_api_token(db, current_user.id)
+    if not token:
+        return {"error": "Uzum API token sozlanmagan"}
+
+    client = UzumClient(api_token=token)
+    if client.update_prices(shop.uzum_shop_id, price_data):
         return {"message": "Price updated successfully"}
     return {"error": "Failed to update price"}
 
+
 @router.post("/stock")
-def update_product_stock(stock_data: dict):
-    client = UzumClient(api_token=settings.UZUM_API_TOKEN)
+def update_product_stock(
+    stock_data: dict,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """Joriy foydalanuvchining FBS qoldiqlarini yangilash."""
+    token = get_api_token(db, current_user.id)
+    if not token:
+        return {"error": "Uzum API token sozlanmagan"}
+
+    client = UzumClient(api_token=token)
     if client.update_fbs_stocks(stock_data):
         return {"message": "Stock updated successfully"}
     return {"error": "Failed to update stock"}

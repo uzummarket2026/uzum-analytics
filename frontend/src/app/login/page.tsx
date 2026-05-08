@@ -90,12 +90,6 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="mt-6 pt-4 border-t border-[#2a2e37] text-xs text-[#64748b]">
-          <p className="font-semibold text-[#94a3b8] mb-1">Standart hisoblar:</p>
-          <p>user1@local / user1pass</p>
-          <p>user2@local / user2pass</p>
-          <p>user3@local / user3pass</p>
-        </div>
       </div>
     </div>
   )

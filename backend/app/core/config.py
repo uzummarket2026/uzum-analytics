@@ -1,5 +1,7 @@
 import os
 import secrets
+import sys
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_FILE = os.path.join(
@@ -26,7 +28,16 @@ class Settings(BaseSettings):
 
     UZUM_API_TOKEN: str = ""
 
-    SECRET_KEY: str = secrets.token_urlsafe(32)
+    # SECRET_KEY env'dan kelishi kerak. Bo'sh bo'lsa — productionda crash, dev'da
+    # ogohlantirish bilan vaqtinchalik tasodifiy kalit. ENV=production qo'yilsa,
+    # bo'sh kalit dasturning ishga tushishini bloklaydi.
+    SECRET_KEY: str = ""
+    ENV: str = "development"
+
+    # Maxfiy ma'lumotlarni (Uzum API token va b.) DB'da shifrlash uchun.
+    # Yo'q bo'lsa SECRET_KEY'dan derive qilinadi.
+    ENCRYPTION_KEY: Optional[str] = None
+
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
@@ -37,3 +48,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Productionda SECRET_KEY majburiy
+if not settings.SECRET_KEY:
+    if settings.ENV.lower() in ("prod", "production"):
+        sys.stderr.write(
+            "FATAL: SECRET_KEY env o'rnatilmagan. Productionda majburiy.\n"
+            "Generatsiya: python -c \"import secrets; print(secrets.token_urlsafe(64))\"\n"
+        )
+        raise RuntimeError("SECRET_KEY is required in production")
+    # Dev fallback — har restartda yangidan, bu OK emas, lekin lokal ishlash uchun
+    settings.SECRET_KEY = secrets.token_urlsafe(32)
+    sys.stderr.write(
+        "WARNING: SECRET_KEY env yo'q. Dev rejimida vaqtinchalik kalit ishlatildi.\n"
+        "Har restartda barcha JWT tokenlar bekor bo'ladi.\n"
+    )

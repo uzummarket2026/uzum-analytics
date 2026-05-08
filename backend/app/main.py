@@ -1,29 +1,48 @@
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.api.api import api_router
+from app.api import deps
+from app.db.models import User
 from app.core.config import settings
 
+
+def _admin_dep(current_user: User = Depends(deps.get_current_user)) -> User:
+    """Faqat admin foydalanuvchilar uchun endpoint dependency."""
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin huquqi talab qilinadi")
+    return current_user
+
 logger = logging.getLogger(__name__)
+
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url="/api/openapi.json"
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Avtomatik sinxronlash uchun scheduler (har soatda buyurtmalar)
 scheduler = BackgroundScheduler(timezone="Asia/Tashkent")
 
 origins = [o.strip() for o in settings.BACKEND_CORS_ORIGINS.split(",") if o.strip()]
 
+# CORS: faqat aniq origin'lardan. Eski "*.up.railway.app" regex olib tashlandi —
+# istalgan railway saytidan API'ga so'rov yuborilishi xavfli edi.
+# Agar railway frontend kerak bo'lsa — uni BACKEND_CORS_ORIGINS env'ga to'liq URL
+# bilan qo'shing.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"https://.*\.up\.railway\.app",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # Database Migration
@@ -103,6 +122,34 @@ def migrate_db():
                     except Exception as e:
                         print(f"Error adding {col}: {e}")
         
+    # 2b. users jadvaliga is_admin va created_at qo'shish (multi-user/admin uchun)
+    if 'users' in tables:
+        existing_user_cols = [c['name'] for c in inspector.get_columns('users')]
+        new_user_cols = {
+            "is_admin": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "created_at": "TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+        }
+        with engine.connect() as conn:
+            for col, col_type in new_user_cols.items():
+                if col not in existing_user_cols:
+                    print(f"Adding column users.{col}...")
+                    try:
+                        conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+                        conn.commit()
+                    except Exception as e:
+                        print(f"Error adding users.{col}: {e}")
+
+        # Eski bazada hech kim admin emas bo'lsa — id=1 bo'lganni admin qilamiz
+        with engine.connect() as conn:
+            try:
+                row = conn.execute(text("SELECT COUNT(*) FROM users WHERE is_admin = TRUE")).scalar()
+                if row == 0:
+                    conn.execute(text("UPDATE users SET is_admin = TRUE WHERE id = (SELECT MIN(id) FROM users)"))
+                    conn.commit()
+                    print("[migrate] Birinchi user is_admin=TRUE qilindi (legacy bazadan ko'chirish)")
+            except Exception as e:
+                print(f"Legacy admin promotion: {e}")
+
     # 3. user_id ustunini barcha tegishli jadvallarga qo'shish (multi-user uchun)
     user_id_tables = ["shops", "products", "orders", "expenses",
                       "invoices", "fbs_orders", "returns", "system_settings"]
@@ -152,43 +199,55 @@ def migrate_db():
 
 
 @app.on_event("startup")
-def seed_users_and_assign_data():
-    """Birinchi ishga tushirishda 3 ta foydalanuvchi yaratiladi
-    va eski ma'lumotlar (agar bo'lsa) birinchi foydalanuvchiga biriktiriladi.
+def seed_admin_and_assign_data():
+    """Birinchi ishga tushirishda admin foydalanuvchi yaratiladi (env'dan).
+    Eski ma'lumotlar (user_id=NULL) admin'ga biriktiriladi.
+
+    Admin parolini env orqali bering:
+        INITIAL_ADMIN_EMAIL=admin@local
+        INITIAL_ADMIN_PASSWORD=<kuchli parol>
+    Agar env berilmasa, hech qanday user yaratilmaydi.
     """
+    import os
     from app.db.session import SessionLocal
     from app.db.models import User, Shop, Product, Order, Expense, Invoice, FbsOrder, Return, SystemSetting
     from app.core import security
     from sqlalchemy import update
 
+    admin_email = os.environ.get("INITIAL_ADMIN_EMAIL")
+    admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+
     db = SessionLocal()
     try:
-        # 3 ta default foydalanuvchi (birinchi ishga tushirishda yaratiladi)
-        DEFAULT_USERS = [
-            ("user1@local", "user1pass"),
-            ("user2@local", "user2pass"),
-            ("user3@local", "user3pass"),
-        ]
         first_user_id = None
-        for email, password in DEFAULT_USERS:
-            existing = db.query(User).filter(User.email == email).first()
-            if not existing:
+
+        # Bazada hech qanday user yo'q bo'lsa va env berilgan bo'lsa — admin yaratamiz
+        any_user = db.query(User).first()
+        if not any_user:
+            if admin_email and admin_password and len(admin_password) >= 8:
                 u = User(
-                    email=email,
-                    hashed_password=security.get_password_hash(password),
+                    email=admin_email,
+                    hashed_password=security.get_password_hash(admin_password),
                     is_active=True,
+                    is_admin=True,
                 )
                 db.add(u)
                 db.commit()
                 db.refresh(u)
-                print(f"[seed] Yaratildi: {email} / {password}")
-                if first_user_id is None:
-                    first_user_id = u.id
+                first_user_id = u.id
+                print(f"[seed] Admin yaratildi: {admin_email}")
             else:
-                if first_user_id is None:
-                    first_user_id = existing.id
+                print("[seed] Hech qanday user yo'q. INITIAL_ADMIN_EMAIL/PASSWORD env "
+                      "(kamida 8 belgili parol) berib qayta ishga tushiring.")
+        else:
+            # Bazada user bor — birinchi adminni topib, eski ma'lumotlarni biriktiramiz
+            admin = db.query(User).filter(User.is_admin == True).order_by(User.id.asc()).first()
+            if not admin:
+                admin = db.query(User).order_by(User.id.asc()).first()
+            if admin:
+                first_user_id = admin.id
 
-        # Eski ma'lumotlar (user_id=NULL) birinchi foydalanuvchiga biriktiriladi
+        # Eski ma'lumotlar (user_id=NULL) birinchi admin/userga biriktiriladi
         if first_user_id is not None:
             for Model in [Shop, Product, Order, Expense, Invoice, FbsOrder, Return, SystemSetting]:
                 stmt = update(Model).where(Model.user_id.is_(None)).values(user_id=first_user_id)
@@ -232,7 +291,7 @@ def root():
     return {"message": f"Welcome to {settings.PROJECT_NAME}"}
 
 @app.post("/admin/migrate-columns")
-def force_migrate_columns():
+def force_migrate_columns(current_user=Depends(_admin_dep)):
     from app.db.session import engine
     from sqlalchemy import text, inspect
 

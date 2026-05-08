@@ -9,13 +9,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 def get_api_token(db, user_id: int) -> str:
-    """Foydalanuvchining shaxsiy Uzum API tokeni."""
+    """Foydalanuvchining shaxsiy Uzum API tokeni (deshifrlangan)."""
+    from app.core.crypto import decrypt
     setting = db.query(SystemSetting).filter(
         SystemSetting.user_id == user_id,
         SystemSetting.key == "uzum_api_token",
     ).first()
     if setting and setting.value:
-        return setting.value
+        plain = decrypt(setting.value)
+        return plain or ""
     return ""
 
 def safe_float(value, default=0.0):
